@@ -536,18 +536,21 @@
       }
 
       await _dfLog('STEP5', 'images...');
-      // 5. Upload images via background fetch proxy â€" with retry
+      // 5. Upload images via background fetch proxy â€" with retry (max 1 attempt, 20s timeout)
       if (productData.images && productData.images.length > 0) {
-        for (let imgAttempt = 1; imgAttempt <= 3; imgAttempt++) {
+        for (let imgAttempt = 1; imgAttempt <= 1; imgAttempt++) {
           await sleep(500);
           // Refresh headers on retry (eBay may have made new API calls by now)
           if (imgAttempt > 1 && !ebayContext) {
             ebayContext = await getEbayHeaders();
           }
           try {
-            results.images = await uploadImages(productData.images, ebayContext, productData.preDownloadedImages);
+            results.images = await Promise.race([
+              uploadImages(productData.images, ebayContext, productData.preDownloadedImages),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('Image upload timeout (20s)')), 20000))
+            ]);
           } catch (e) {
-            console.warn(`[DropFlow] Image upload attempt ${imgAttempt}/3 threw: ${e.message}`);
+            console.warn(`[DropFlow] Image upload attempt ${imgAttempt}/1 threw: ${e.message}`);
             results.images = false;
           }
           if (results.images) break;
@@ -6229,7 +6232,10 @@
    */
   async function getEbayHeaders() {
     try {
-      const resp = await chrome.runtime.sendMessage({ type: 'GET_EBAY_HEADERS' });
+      const resp = await Promise.race([
+        chrome.runtime.sendMessage({ type: 'GET_EBAY_HEADERS' }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('getEbayHeaders timeout (10s)')), 10000))
+      ]);
       if (resp && resp.success && resp.headers) {
         console.log(`[DropFlow] Got eBay headers, draftId: ${resp.draftId}, mediaUrl: ${resp.mediaUploadUrl || 'none'}`);
         return {
