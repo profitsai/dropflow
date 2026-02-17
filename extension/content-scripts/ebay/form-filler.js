@@ -536,8 +536,10 @@
       }
 
       await _dfLog('STEP5', 'images...');
-      // 5. Upload images via background fetch proxy â€" with retry (max 1 attempt, 20s timeout)
-      if (productData.images && productData.images.length > 0) {
+      // 5. Upload images — SKIPPED for now (chrome.runtime.sendMessage hangs in MV3)
+      // TODO: Re-enable once SW message channel is fixed
+      await _dfLog('STEP5', 'images SKIPPED (SW sendMessage hangs)');
+      if (false && productData.images && productData.images.length > 0) {
         for (let imgAttempt = 1; imgAttempt <= 1; imgAttempt++) {
           await sleep(500);
           // Refresh headers on retry (eBay may have made new API calls by now)
