@@ -1360,22 +1360,52 @@
       return false;
     }
 
-    // --- Early exit: if the parent page already has a variations table with rows,
-    // skip the entire builder flow and let step 5c (fillVariationCombinationsTable)
-    // handle pricing. This avoids opening the MSKU builder when variations already exist.
+    // --- Early exit: if the parent page already has a variations/combinations table,
+    // fill prices DIRECTLY here and skip the entire builder flow.
+    // This avoids the broken MSKU builder iframe approach entirely.
     if (IS_TOP_FRAME) {
       const varSection = findVariationsSection();
       if (varSection) {
+        // Check multiple structures: real <table>, div-based grids, or any inputs
         const existingTable = varSection.querySelector('table');
-        if (existingTable && existingTable.querySelectorAll('tr').length >= 3) {
-          console.log('[DropFlow] fillVariations: variations table already exists on parent page ' +
-            `(${existingTable.querySelectorAll('tr').length} rows). Skipping builder — ` +
-            'step 5c will fill prices.');
+        const tableRows = existingTable ? existingTable.querySelectorAll('tr').length : 0;
+        const allInputs = varSection.querySelectorAll('input[type="text"], input[type="number"], input:not([type])');
+        const priceInputs = Array.from(allInputs).filter(i => {
+          const hints = `${i.placeholder || ''} ${i.getAttribute('aria-label') || ''} ${i.name || ''} ${i.id || ''}`.toLowerCase();
+          return /price|amount|\$/.test(hints);
+        });
+        // Also check for div-based rows with role="row" or grid patterns
+        const divRows = varSection.querySelectorAll('[role="row"], [class*="row"], [class*="combination"], [class*="variant"]');
+
+        const hasExistingVariations = tableRows >= 3 || priceInputs.length >= 1 || divRows.length >= 2;
+
+        console.log(`[DropFlow] fillVariations: early exit check — varSection found, ` +
+          `tableRows=${tableRows}, priceInputs=${priceInputs.length}, divRows=${divRows.length}, ` +
+          `hasExisting=${hasExistingVariations}`);
+        console.log(`[DropFlow] fillVariations: varSection tag=${varSection.tagName}, ` +
+          `class="${(varSection.className || '').toString().slice(0, 100)}", ` +
+          `textSnippet="${(varSection.textContent || '').slice(0, 200).replace(/\s+/g, ' ')}"`);
+
+        if (hasExistingVariations) {
+          console.log('[DropFlow] fillVariations: variations already exist on parent page — ' +
+            'filling prices directly, skipping builder entirely.');
           await logVariationStep('fillVariations:existingTableDetected', {
-            rowCount: existingTable.querySelectorAll('tr').length,
+            tableRows, priceInputs: priceInputs.length, divRows: divRows.length,
           });
-          return true; // Signal success so step 5c runs and fills prices
+          // Fill prices directly using the combinations table filler
+          try {
+            const comboResult = await fillVariationCombinationsTable(productData);
+            console.log(`[DropFlow] fillVariations: direct price fill result: ` +
+              `${comboResult.filledPrices} prices, ${comboResult.filledQuantities} qty, ` +
+              `${comboResult.totalRows} rows, success=${comboResult.success}`);
+            await logVariationStep('fillVariations:directPriceFillComplete', comboResult);
+          } catch (err) {
+            console.error('[DropFlow] fillVariations: direct price fill error:', err);
+          }
+          return true; // Signal success — prices already filled
         }
+      } else {
+        console.log('[DropFlow] fillVariations: findVariationsSection() returned null on parent page');
       }
     }
 
@@ -1386,6 +1416,29 @@
       // run the builder flow from the parent page. Instead, inject form-filler
       // into the iframe and wait for the subframe instance to handle it.
       if (builderCtxAtStart.isMskuDialog && IS_TOP_FRAME) {
+        // Double-check: is there ACTUALLY a visible MSKU iframe/dialog element?
+        // The builder context detector can false-positive on listing pages that show
+        // "Variations" text. Only delegate if we find the actual dialog/iframe.
+        const actualMskuIframe = findMskuBulkeditIframe();
+        const actualMskuDialog = document.querySelector('.msku-dialog, [class*="msku-dialog"]');
+        if (!actualMskuIframe && !actualMskuDialog) {
+          console.warn('[DropFlow] MSKU dialog detection was false positive (no iframe/dialog element found). ' +
+            'Skipping iframe delegation — will attempt direct price fill instead.');
+          await logVariationStep('fillVariations:mskuDialogFalsePositive', {
+            url: window.location.href,
+            signals: builderCtxAtStart.signals,
+          });
+          // Try to fill prices directly on the parent page
+          try {
+            const comboResult = await fillVariationCombinationsTable(productData);
+            console.log(`[DropFlow] fillVariations: fallback direct price fill: ` +
+              `${comboResult.filledPrices} prices, ${comboResult.totalRows} rows`);
+            if (comboResult.success || comboResult.filledPrices > 0) return true;
+          } catch (err) {
+            console.error('[DropFlow] fillVariations: fallback direct price fill error:', err);
+          }
+          // If direct fill also failed, continue to the normal builder flow below
+        }
         await logVariationStep('fillVariations:mskuDialogDelegateToIframe', { url: window.location.href });
         console.warn('[DropFlow] MSKU dialog detected in parent frame — delegating to iframe instance');
         
