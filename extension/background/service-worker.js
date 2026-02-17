@@ -2995,8 +2995,7 @@ async function runCompetitorResearch(usernames, options) {
       const tab = await createTabAndWait(searchUrl);
       await new Promise(r => setTimeout(r, 3000));
 
-      // TODO: Inject script to extract sold listing data from the page
-      // For now, just track progress
+      // Competitor sold-listing extraction is planned for a future release.
       await chrome.tabs.remove(tab.id);
 
       position++;

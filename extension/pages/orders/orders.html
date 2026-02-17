@@ -4,89 +4,55 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DropFlow — Auto-Orders</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; padding: 20px; }
-    h1 { font-size: 22px; margin-bottom: 16px; }
-    .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
-    .tab { padding: 8px 16px; background: #e0e0e0; border: none; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 13px; }
-    .tab.active { background: #fff; font-weight: 600; }
-    .card { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-    .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-    .card-title { font-weight: 600; font-size: 14px; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .badge { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
-    .badge-pending { background: #fff3cd; color: #856404; }
-    .badge-processing { background: #cce5ff; color: #004085; }
-    .badge-awaiting_payment { background: #f8d7da; color: #721c24; }
-    .badge-ordered { background: #d4edda; color: #155724; }
-    .badge-shipped { background: #d1ecf1; color: #0c5460; }
-    .badge-delivered { background: #c3e6cb; color: #155724; }
-    .badge-cancelled { background: #e2e3e5; color: #383d41; }
-    .badge-failed { background: #f5c6cb; color: #721c24; }
-    .card-details { font-size: 12px; color: #666; line-height: 1.6; }
-    .card-actions { margin-top: 10px; display: flex; gap: 8px; }
-    .btn { padding: 6px 14px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 500; }
-    .btn-primary { background: #0066cc; color: #fff; }
-    .btn-success { background: #28a745; color: #fff; }
-    .btn-danger { background: #dc3545; color: #fff; }
-    .btn-secondary { background: #6c757d; color: #fff; }
-    .btn:hover { opacity: 0.85; }
-    .empty { text-align: center; padding: 40px; color: #999; }
-    .create-section { margin-bottom: 20px; }
-    .create-section input, .create-section select { padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; margin-right: 8px; }
-    .settings-section { margin-top: 20px; }
-    .settings-section label { display: block; margin: 8px 0 4px; font-size: 13px; font-weight: 500; }
-    .settings-section input[type="text"], .settings-section input[type="number"] { width: 300px; padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
-    .settings-section input[type="checkbox"] { margin-right: 6px; }
-    .address-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-width: 620px; }
-    #status-bar { padding: 8px 12px; background: #e8f5e9; border-radius: 4px; margin-bottom: 12px; font-size: 13px; display: none; }
-  </style>
+  <link rel="stylesheet" href="orders.css">
 </head>
 <body>
   <h1>📦 Auto-Orders</h1>
   <div id="status-bar"></div>
 
   <div class="tabs">
-    <button class="tab active" data-tab="orders" onclick="switchTab('orders')">Orders</button>
-    <button class="tab" data-tab="create" onclick="switchTab('create')">+ New Order</button>
-    <button class="tab" data-tab="settings" onclick="switchTab('settings')">Settings</button>
+    <button class="tab active" data-tab="orders">Orders</button>
+    <button class="tab" data-tab="create">+ New Order</button>
+    <button class="tab" data-tab="settings">Settings</button>
   </div>
 
   <!-- Orders List -->
   <div id="tab-orders">
-    <div id="orders-list"></div>
+    <div id="orders-list">
+      <div class="empty">Loading orders...</div>
+    </div>
   </div>
 
   <!-- Create Order -->
   <div id="tab-create" style="display:none">
     <div class="card create-section">
-      <h3 style="margin-bottom:12px;font-size:15px;">Create Order from eBay Sale</h3>
-      <div style="margin-bottom:8px;">
+      <h3 class="create-heading">Create Order from eBay Sale</h3>
+      <div class="create-row">
         <input id="new-ebay-item-id" placeholder="eBay Item ID" style="width:200px;">
         <input id="new-ebay-order-id" placeholder="eBay Order ID (optional)" style="width:200px;">
       </div>
-      <div style="margin-bottom:8px;">
+      <div class="create-row">
         <input id="new-sold-price" placeholder="Sold Price" type="number" step="0.01" style="width:120px;">
         <input id="new-quantity" placeholder="Qty" type="number" value="1" style="width:60px;">
         <input id="new-source-url" placeholder="Source URL (if not tracked)" style="width:300px;">
       </div>
-      <div style="margin-bottom:8px;">
+      <div class="create-row">
         <input id="new-buyer-name" placeholder="Buyer Name" style="width:200px;">
         <input id="new-buyer-address" placeholder="Buyer Address (line 1)" style="width:300px;">
       </div>
-      <button class="btn btn-primary" onclick="createNewOrder()">Create Order</button>
+      <button id="btn-create-order" class="btn btn-primary">Create Order</button>
     </div>
   </div>
 
   <!-- Settings -->
   <div id="tab-settings" style="display:none">
     <div class="card settings-section">
-      <h3 style="margin-bottom:12px;font-size:15px;">Auto-Order Settings</h3>
+      <h3 class="create-heading">Auto-Order Settings</h3>
       <label><input type="checkbox" id="set-require-confirm"> Require manual payment confirmation (recommended)</label>
       <label><input type="checkbox" id="set-notify-ready"> Notify when order is ready for payment</label>
       <label>Max auto-order price ($): <input type="number" id="set-max-price" step="1"></label>
       
-      <h4 style="margin-top:16px;margin-bottom:8px;font-size:14px;">Default Shipping Address</h4>
+      <h4 class="settings-heading">Default Shipping Address</h4>
       <div class="address-grid">
         <div><label>Full Name</label><input type="text" id="addr-name"></div>
         <div><label>Phone</label><input type="text" id="addr-phone"></div>
@@ -97,7 +63,7 @@
         <div><label>Postal Code</label><input type="text" id="addr-postal"></div>
         <div><label>Country</label><input type="text" id="addr-country"></div>
       </div>
-      <button class="btn btn-primary" style="margin-top:12px;" onclick="saveSettings()">Save Settings</button>
+      <button id="btn-save-settings" class="btn btn-primary save-btn">Save Settings</button>
     </div>
   </div>
 

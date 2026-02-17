@@ -16,6 +16,29 @@ let settings = {};
 
 // === Init ===
 document.addEventListener('DOMContentLoaded', async () => {
+  // Set up tab switching via event listeners (MV3 CSP compliant)
+  document.querySelectorAll('.tab[data-tab]').forEach(tab => {
+    tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+  });
+
+  // Button listeners
+  document.getElementById('btn-create-order').addEventListener('click', () => createNewOrder());
+  document.getElementById('btn-save-settings').addEventListener('click', () => saveSettings());
+
+  // Event delegation for order action buttons
+  document.getElementById('orders-list').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const id = btn.dataset.id;
+    if (action === 'start') startOrder(id);
+    else if (action === 'cancel') cancelOrd(id);
+    else if (action === 'confirm') confirmPayment(id);
+    else if (action === 'shipped') markShipped(id);
+    else if (action === 'tracking') addTracking(id);
+    else if (action === 'delivered') markDelivered(id);
+  });
+
   await loadOrders();
   await loadSettings();
   
@@ -29,7 +52,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // === Tab Switching ===
-window.switchTab = function(tabName) {
+function switchTab(tabName) {
   document.querySelectorAll('[id^="tab-"]').forEach(el => el.style.display = 'none');
   document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
   document.getElementById(`tab-${tabName}`).style.display = 'block';
@@ -86,22 +109,22 @@ function getOrderActions(order) {
   
   switch (order.status) {
     case 'pending':
-      html += `<button class="btn btn-primary" onclick="startOrder('${id}')">🛒 Order Now</button>`;
-      html += `<button class="btn btn-danger" onclick="cancelOrd('${id}')">Cancel</button>`;
+      html += `<button class="btn btn-primary" data-action="start" data-id="${id}">🛒 Order Now</button>`;
+      html += `<button class="btn btn-danger" data-action="cancel" data-id="${id}">Cancel</button>`;
       break;
     case 'processing':
       html += `<span style="font-size:12px;color:#666;">Processing...</span>`;
       break;
     case 'awaiting_payment':
-      html += `<button class="btn btn-success" onclick="confirmPayment('${id}')">✅ Confirm Payment</button>`;
-      html += `<button class="btn btn-danger" onclick="cancelOrd('${id}')">Cancel</button>`;
+      html += `<button class="btn btn-success" data-action="confirm" data-id="${id}">✅ Confirm Payment</button>`;
+      html += `<button class="btn btn-danger" data-action="cancel" data-id="${id}">Cancel</button>`;
       break;
     case 'ordered':
-      html += `<button class="btn btn-secondary" onclick="markShipped('${id}')">📦 Mark Shipped</button>`;
-      html += `<button class="btn btn-secondary" onclick="addTracking('${id}')">Add Tracking</button>`;
+      html += `<button class="btn btn-secondary" data-action="shipped" data-id="${id}">📦 Mark Shipped</button>`;
+      html += `<button class="btn btn-secondary" data-action="tracking" data-id="${id}">Add Tracking</button>`;
       break;
     case 'shipped':
-      html += `<button class="btn btn-success" onclick="markDelivered('${id}')">✅ Mark Delivered</button>`;
+      html += `<button class="btn btn-success" data-action="delivered" data-id="${id}">✅ Mark Delivered</button>`;
       break;
     default:
       break;
@@ -111,7 +134,7 @@ function getOrderActions(order) {
 }
 
 // === Actions ===
-window.startOrder = async function(orderId) {
+async function startOrder(orderId) {
   showStatus('Starting auto-order...');
   const resp = await chrome.runtime.sendMessage({ type: START_AUTO_ORDER, orderId });
   if (resp?.error) showStatus(`Error: ${resp.error}`, true);
@@ -119,7 +142,7 @@ window.startOrder = async function(orderId) {
   await loadOrders();
 };
 
-window.confirmPayment = async function(orderId) {
+async function confirmPayment(orderId) {
   const sourceOrderId = prompt('Enter the source order/confirmation number (optional):') || '';
   const resp = await chrome.runtime.sendMessage({ 
     type: CONFIRM_ORDER_PAYMENT, orderId, sourceOrderId 
@@ -129,27 +152,27 @@ window.confirmPayment = async function(orderId) {
   await loadOrders();
 };
 
-window.cancelOrd = async function(orderId) {
+async function cancelOrd(orderId) {
   if (!confirm('Cancel this order?')) return;
   await chrome.runtime.sendMessage({ type: CANCEL_ORDER, orderId });
   await loadOrders();
 };
 
-window.markShipped = async function(orderId) {
+async function markShipped(orderId) {
   await chrome.runtime.sendMessage({ 
     type: UPDATE_ORDER_STATUS, orderId, updates: { status: 'shipped' } 
   });
   await loadOrders();
 };
 
-window.markDelivered = async function(orderId) {
+async function markDelivered(orderId) {
   await chrome.runtime.sendMessage({ 
     type: UPDATE_ORDER_STATUS, orderId, updates: { status: 'delivered' } 
   });
   await loadOrders();
 };
 
-window.addTracking = async function(orderId) {
+async function addTracking(orderId) {
   const tracking = prompt('Enter tracking number:');
   if (!tracking) return;
   const carrier = prompt('Carrier (e.g. USPS, FedEx, Yanwen):') || '';
@@ -161,7 +184,7 @@ window.addTracking = async function(orderId) {
 };
 
 // === Create Order ===
-window.createNewOrder = async function() {
+async function createNewOrder() {
   const saleData = {
     ebayItemId: document.getElementById('new-ebay-item-id').value.trim(),
     ebayOrderId: document.getElementById('new-ebay-order-id').value.trim(),
@@ -207,7 +230,7 @@ async function loadSettings() {
   document.getElementById('addr-country').value = addr.country || '';
 }
 
-window.saveSettings = async function() {
+async function saveSettings() {
   const updated = {
     requireManualConfirm: document.getElementById('set-require-confirm').checked,
     notifyOnReady: document.getElementById('set-notify-ready').checked,
