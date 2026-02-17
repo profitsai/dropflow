@@ -33,6 +33,36 @@
   let __dropflowVariationSaveCloseTs = 0;
 
   /**
+   * Wrapper for chrome.runtime.sendMessage that actually times out.
+   * Promise.race with setTimeout does NOT work when sendMessage hangs the event loop.
+   * This uses the Promise constructor pattern where the timer is set up BEFORE the call.
+   * @param {object} msg - Message to send
+   * @param {number} timeoutMs - Timeout in milliseconds (default 10000)
+   * @returns {Promise<any>} Response or null on timeout/error
+   */
+  function sendMessageSafe(msg, timeoutMs = 10000) {
+    return new Promise(resolve => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          console.warn(`[DropFlow] sendMessageSafe timeout (${timeoutMs}ms) for ${msg?.type || 'unknown'}`);
+          resolve(null);
+        }
+      }, timeoutMs);
+      try {
+        chrome.runtime.sendMessage(msg).then(resp => {
+          if (!settled) { settled = true; clearTimeout(timer); resolve(resp); }
+        }).catch(err => {
+          if (!settled) { settled = true; clearTimeout(timer); console.warn(`[DropFlow] sendMessageSafe error for ${msg?.type}:`, err?.message); resolve(null); }
+        });
+      } catch (e) {
+        if (!settled) { settled = true; clearTimeout(timer); resolve(null); }
+      }
+    });
+  }
+
+  /**
    * Find the real MSKU bulkedit iframe by checking the actual hostname of the src URL,
    * not just a substring match. This avoids false positives where a picupload iframe
    * has "bulkedit.ebay.com.au" as a query parameter in its URL.
@@ -840,11 +870,11 @@
       chrome.storage.local.set({
         dropflow_last_fill_results: { ...results, url: window.location.href, timestamp: new Date().toISOString() }
       }).catch(() => {});
-      chrome.runtime.sendMessage({
+      sendMessageSafe({
         type: 'EBAY_FORM_FILLED',
         results,
         url: window.location.href
-      }).catch(() => {});
+      }, 5000).catch(() => {});
 
       // 9. Pre-submit photo check — SKIP reupload, just log status
       //    Previous logic caused false positives on MSKU builder pages where
@@ -1082,7 +1112,7 @@
           dataUrl = preDownloadedImages[i];
         } else if (imageUrls[i]) {
           const url = imageUrls[i].startsWith('//') ? 'https:' + imageUrls[i] : imageUrls[i];
-          const response = await chrome.runtime.sendMessage({ type: 'FETCH_IMAGE', url });
+          const response = await sendMessageSafe({ type: 'FETCH_IMAGE', url }, 15000);
           if (response?.success && response.dataUrl) dataUrl = response.dataUrl;
         }
         if (dataUrl) files.push(dataUrlToFile(dataUrl, `product-image-${i + 1}.jpg`));
@@ -1336,7 +1366,7 @@
         
         // Inject form-filler into all frames (the MSKU iframe will pick it up)
         try {
-          await chrome.runtime.sendMessage({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href });
+          await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000);
         } catch (e) {
           console.warn('[DropFlow] Iframe injection failed:', e.message);
         }
@@ -1364,7 +1394,7 @@
           // Re-inject every 15 seconds in case the iframe navigated
           if (wait > 0 && wait % 30 === 0) {
             try {
-              await chrome.runtime.sendMessage({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href });
+              await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000);
             } catch (_) {}
           }
           
@@ -1501,7 +1531,7 @@
       if (preEnableBuilderCtx.isMskuDialog && IS_TOP_FRAME) {
         // MSKU dialog already open — delegate to iframe
         await logVariationStep('fillVariations:builderDetectedBeforeEnable:mskuDialog', { url: window.location.href });
-        try { await chrome.runtime.sendMessage({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }); } catch (_) {}
+        try { await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000); } catch (_) {}
         for (let mw = 0; mw < 240; mw++) {
           await sleep(500);
           if (!document.querySelector('.msku-dialog') && checkVariationsPopulated()) {
@@ -1509,7 +1539,7 @@
             return { filledAxes, axisNameMap };
           }
           if (mw > 0 && mw % 30 === 0) {
-            try { await chrome.runtime.sendMessage({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }); } catch (_) {}
+            try { await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000); } catch (_) {}
           }
         }
         return false;
@@ -1619,7 +1649,7 @@
         const retryBuilderCtx = detectVariationBuilderContextWithLog(`fillVariations:editRetry:${attempt}`);
         if (retryBuilderCtx.isBuilder) {
           if (retryBuilderCtx.isMskuDialog && IS_TOP_FRAME) {
-            try { await chrome.runtime.sendMessage({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }); } catch (_) {}
+            try { await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000); } catch (_) {}
             continue; // Let iframe handle it; keep looking for edit button or dialog close
           }
           await logVariationStep('fillVariations:builderDetectedInEditRetry', { attempt });
@@ -1700,7 +1730,7 @@
           });
           // Request injection into the iframe
           try {
-            await chrome.runtime.sendMessage({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href });
+            await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000);
           } catch (_) {}
           // Continue the loop — the iframe will handle the builder flow.
           // We'll detect completion via checkVariationsPopulated() or dialog close below.
@@ -1747,10 +1777,10 @@
             if (navWait % 10 === 0) {
               console.warn(`[DropFlow] MSKU iframe cross-origin (iter=${navWait}): ${e.message}. Requesting SW injection...`);
               try {
-                await chrome.runtime.sendMessage({
+                await sendMessageSafe({
                   type: 'INJECT_FORM_FILLER_IN_FRAMES',
                   url: window.location.href
-                });
+                }, 5000);
               } catch (swErr) {
                 console.warn(`[DropFlow] SW injection request failed: ${swErr.message}`);
               }
@@ -1762,11 +1792,11 @@
               const variations = productData.variations;
               if (variations?.skus?.length > 0) {
                 try {
-                  const result = await chrome.runtime.sendMessage({
+                  const result = await sendMessageSafe({
                     type: 'FILL_MSKU_PRICES',
                     skus: variations.skus,
                     defaultPrice: productData.ebayPrice || 0
-                  });
+                  }, 15000);
                   if (result?.filled > 0) {
                     console.log(`[DropFlow] FILL_MSKU_PRICES filled ${result.filled} prices in MSKU iframe`);
                   }
@@ -1958,7 +1988,7 @@
         // FIX: Skip if MSKU dialog — let iframe handle it
         if (lateCtx.isMskuDialog && IS_TOP_FRAME) {
           if (attempt % 10 === 0) {
-            try { await chrome.runtime.sendMessage({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }); } catch (_) {}
+            try { await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000); } catch (_) {}
           }
           if (checkVariationsPopulated()) {
             const filledAxes = axisMapping.map(m => m.ebayLabel);
@@ -2006,7 +2036,7 @@
       if (noEditorCtx.isBuilder) {
         // FIX: Skip if MSKU dialog — let iframe handle it
         if (noEditorCtx.isMskuDialog && IS_TOP_FRAME) {
-          try { await chrome.runtime.sendMessage({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }); } catch (_) {}
+          try { await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000); } catch (_) {}
           // Wait a bit for iframe builder to complete
           for (let mw = 0; mw < 120; mw++) {
             await sleep(1000);
@@ -2230,7 +2260,7 @@
       const fallbackCtx = detectVariationBuilderContextWithLog('fillVariations:noInputsFallback');
       if (fallbackCtx.isBuilder) {
         if (fallbackCtx.isMskuDialog && IS_TOP_FRAME) {
-          try { await chrome.runtime.sendMessage({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }); } catch (_) {}
+          try { await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000); } catch (_) {}
         } else {
           await logVariationStep('fillVariations:variationBuilderFallbackFromNoInputs', {
             axisInputsFound,
@@ -5200,7 +5230,7 @@
         });
         // Request service worker to inject form-filler into the MSKU iframe
         try {
-          await chrome.runtime.sendMessage({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href });
+          await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000);
         } catch (e) {
           console.warn('[DropFlow] MSKU iframe injection request failed:', e.message);
         }
@@ -5215,7 +5245,7 @@
       // FIX: If this is an MSKU dialog detection, ensure iframe is injected
       if (builderCtx.isMskuDialog) {
         try {
-          await chrome.runtime.sendMessage({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href });
+          await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000);
         } catch (_) {}
       }
       // Important: return the builder sentinel so callers route into builder flow
@@ -5980,7 +6010,7 @@
           const url = images[i];
           if (!url || (!url.startsWith('http') && !url.startsWith('//'))) continue;
           const normalUrl = url.startsWith('//') ? 'https:' + url : url;
-          const response = await chrome.runtime.sendMessage({ type: 'FETCH_IMAGE', url: normalUrl });
+          const response = await sendMessageSafe({ type: 'FETCH_IMAGE', url: normalUrl }, 15000);
           if (response?.success && response.dataUrl) {
             dataUrl = response.dataUrl;
           }
@@ -6152,7 +6182,7 @@
         if (!dataUrl) {
           // Try FETCH_IMAGE as fallback
           try {
-            const resp = await chrome.runtime.sendMessage({ type: 'FETCH_IMAGE', url: val.image });
+            const resp = await sendMessageSafe({ type: 'FETCH_IMAGE', url: val.image }, 15000);
             if (resp?.success && resp.dataUrl) dataUrl = resp.dataUrl;
           } catch (_) {}
         }
@@ -6183,7 +6213,7 @@
           // Fallback: try service worker proxy
           if (!uploadedUrl) {
             try {
-              const resp = await chrome.runtime.sendMessage({
+              const resp = await sendMessageSafe({
                 type: 'UPLOAD_EBAY_IMAGE', imageDataUrl: dataUrl,
                 filename: `variation-${val.name.replace(/\s+/g, '-')}.jpg`
               });
@@ -6234,10 +6264,7 @@
    */
   async function getEbayHeaders() {
     try {
-      const resp = await Promise.race([
-        chrome.runtime.sendMessage({ type: 'GET_EBAY_HEADERS' }),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('getEbayHeaders timeout (10s)')), 10000))
-      ]);
+      const resp = await sendMessageSafe({ type: 'GET_EBAY_HEADERS' }, 10000);
       if (resp && resp.success && resp.headers) {
         console.log(`[DropFlow] Got eBay headers, draftId: ${resp.draftId}, mediaUrl: ${resp.mediaUploadUrl || 'none'}`);
         return {
@@ -7293,8 +7320,7 @@
     // Step 3: Get AI-suggested values for all required fields
     let aiValues = {};
     try {
-      const resp = await Promise.race([
-        chrome.runtime.sendMessage({
+      const resp = await sendMessageSafe({
           type: 'GENERATE_ITEM_SPECIFICS',
           requiredFields: fieldLabels,
           productData: {
@@ -7302,9 +7328,7 @@
             description: productData.description || productData.aiDescription || '',
             bulletPoints: productData.bulletPoints || []
           }
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('AI specifics timeout (30s)')), 30000))
-      ]);
+        }, 30000);
       if (resp && resp.success && resp.specifics) {
         aiValues = resp.specifics;
         console.log('[DropFlow] AI item specifics received:', aiValues);
@@ -7667,7 +7691,7 @@
           console.log(`[DropFlow] Image ${i + 1}: using pre-downloaded data (${Math.round(dataUrl.length / 1024)}KB)`);
         } else if (normalizedUrls[i]) {
           // Priority 2: Fetch via service worker (Amazon flow, or AliExpress fallback)
-          const response = await chrome.runtime.sendMessage({
+          const response = await sendMessageSafe({
             type: 'FETCH_IMAGE',
             url: normalizedUrls[i]
           });
@@ -8296,7 +8320,7 @@
         try {
           // Convert File back to data URL for message passing
           const dataUrl = await fileToDataUrl(files[i]);
-          const resp = await chrome.runtime.sendMessage({
+          const resp = await sendMessageSafe({
             type: 'UPLOAD_EBAY_IMAGE',
             imageDataUrl: dataUrl,
             filename: files[i].name
@@ -9462,7 +9486,7 @@
     // Ask background for our tab ID
     let tabId = null;
     try {
-      const resp = await chrome.runtime.sendMessage({ type: 'GET_TAB_ID' });
+      const resp = await sendMessageSafe({ type: 'GET_TAB_ID' }, 5000);
       tabId = resp?.tabId;
     } catch (e) {
       console.warn('[DropFlow] GET_TAB_ID failed (SW may be dead):', e?.message);
@@ -9606,7 +9630,7 @@
             console.warn('[DropFlow] MSKU dialog detected in checkPendingData — injecting into iframe and waiting');
             await logVariationStep('checkPendingData:mskuDialogDelegateToIframe', { url: window.location.href });
             // Inject form-filler into MSKU iframe
-            try { await chrome.runtime.sendMessage({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }); } catch (_) {}
+            try { await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000); } catch (_) {}
             // Wait for iframe to complete (dialog closes or variations populate)
             for (let mw = 0; mw < 240; mw++) {
               await sleep(500);
@@ -9626,7 +9650,7 @@
               }
               // Re-inject every 15s
               if (mw > 0 && mw % 30 === 0) {
-                try { await chrome.runtime.sendMessage({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }); } catch (_) {}
+                try { await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000); } catch (_) {}
               }
               if (mw % 20 === 0) console.log(`[DropFlow] Waiting for MSKU iframe... ${mw * 500}ms`);
             }
