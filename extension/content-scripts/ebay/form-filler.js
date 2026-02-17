@@ -977,17 +977,21 @@
       return productData.aiDescription;
     }
 
+    // Try AI generation with a hard 15s timeout (chrome.runtime.sendMessage can hang in MV3)
     try {
-      console.log('[DropFlow] Requesting AI-generated description...');
-      const response = await Promise.race([
-        chrome.runtime.sendMessage({
-          type: 'GENERATE_DESCRIPTION',
-          title: productData.title || '',
-          bulletPoints: productData.bulletPoints || [],
-          description: productData.description || ''
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('AI description timeout (30s)')), 30000))
-      ]);
+      console.log('[DropFlow] Requesting AI-generated description (15s timeout)...');
+      let timeoutId;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('AI description timeout (15s)')), 15000);
+      });
+      const msgPromise = chrome.runtime.sendMessage({
+        type: 'GENERATE_DESCRIPTION',
+        title: productData.title || '',
+        bulletPoints: productData.bulletPoints || [],
+        description: productData.description || ''
+      });
+      const response = await Promise.race([msgPromise, timeoutPromise]);
+      clearTimeout(timeoutId);
 
       if (response && response.success && response.html) {
         console.log('[DropFlow] AI description generated successfully');
@@ -998,6 +1002,7 @@
       console.warn('[DropFlow] AI description request error:', e.message);
     }
     // Fallback to static template
+    console.log('[DropFlow] Using static description template');
     return buildDescription(productData);
   }
 
