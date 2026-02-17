@@ -721,9 +721,14 @@ function monitorEbayFormPage(tabId) {
 
   // Strategy 1: Listen for tab updates (works for full navigations)
   const listener = async (changeTabId, changeInfo, tab) => {
-    if (changeTabId !== tabId || injected) return;
+    if (changeTabId !== tabId) return;
+    // Reset injected flag when navigating away from form page
+    if (changeInfo.url && !changeInfo.url.includes('/lstng')) {
+      injected = false;
+      return;
+    }
+    if (injected) return;
     if (changeInfo.status === 'complete' && tab.url && tab.url.includes('/lstng')) {
-      chrome.tabs.onUpdated.removeListener(listener);
       await tryInject();
     }
   };
@@ -731,13 +736,12 @@ function monitorEbayFormPage(tabId) {
 
   // Strategy 2: Poll the tab URL every 3s (catches SPA/React route changes)
   const pollInterval = setInterval(async () => {
-    if (injected) { clearInterval(pollInterval); return; }
     try {
       const tab = await chrome.tabs.get(tabId);
-      if (tab.url && tab.url.includes('/lstng') && tab.status === 'complete') {
-        clearInterval(pollInterval);
-        chrome.tabs.onUpdated.removeListener(listener);
+      if (tab.url && tab.url.includes('/lstng') && tab.status === 'complete' && !injected) {
         await tryInject();
+      } else if (tab.url && !tab.url.includes('/lstng')) {
+        injected = false; // Reset when navigating away
       }
     } catch (_) {
       // Tab closed

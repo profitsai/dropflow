@@ -12,10 +12,18 @@
   // and force-injection from service worker fire on the same page.
   // On full page navigations this flag resets (new JS context).
   if (window.__dropflow_form_filler_loaded) {
-    console.log('[DropFlow] Form filler already loaded on this page, skipping duplicate injection');
-    return;
+    // Allow re-injection if previous run was > 30s ago (likely page transitioned back from builder)
+    if (window.__dropflow_form_filler_loadedAt && (Date.now() - window.__dropflow_form_filler_loadedAt) > 30000) {
+      console.log('[DropFlow] Re-injecting form-filler (previous load was ' + ((Date.now() - window.__dropflow_form_filler_loadedAt) / 1000).toFixed(0) + 's ago)');
+      // Reset locks
+      window.__dropflowFillFormLock = null;
+    } else {
+      console.log('[DropFlow] form-filler already loaded, skipping duplicate');
+      return;
+    }
   }
   window.__dropflow_form_filler_loaded = true;
+  window.__dropflow_form_filler_loadedAt = Date.now();
 
   const IS_TOP_FRAME = (() => {
     try { return window.top === window; } catch (_) { return false; }
@@ -2623,10 +2631,10 @@
 
     console.warn(`[DropFlow] fillCombinationsTable: ${dataRows.length} data rows found`);
 
-    // FLAT PRICING: compute max price across all in-stock variants
+    // PER-VARIANT PRICING: match each row to its variant via cell text
     const allPricesForFlat = priceLookup.map(e => e.price).filter(p => p > 0);
-    const flatPrice = allPricesForFlat.length > 0 ? Math.max(...allPricesForFlat) : (Number(productData.ebayPrice || 0) || 9.99);
-    console.warn(`[DropFlow] fillCombinationsTable: FLAT PRICING $${flatPrice} for all ${dataRows.length} rows`);
+    const fallbackPrice = allPricesForFlat.length > 0 ? Math.max(...allPricesForFlat) : (Number(productData.ebayPrice || 0) || 9.99);
+    console.warn(`[DropFlow] fillCombinationsTable: PER-VARIANT pricing (${priceLookup.length} variants, fallback=$${fallbackPrice})`);
 
     let filledPrices = 0, filledQuantities = 0, filledSKUs = 0;
     const unmatchedRows = [];
@@ -2648,10 +2656,51 @@
       }
     }
 
-    for (const row of dataRows) {
+    for (let rowIdx = 0; rowIdx < dataRows.length; rowIdx++) {
+      const row = dataRows[rowIdx];
       const cells = Array.from(row.querySelectorAll('td'));
       const inputs = row.querySelectorAll('input[type="text"], input[type="number"], input:not([type])');
       let priceDoneRow = false, qtyDoneRow = false, skuDoneRow = false;
+
+      // --- Match this row to a variant by reading cell text ---
+      const rowText = norm(row.textContent || '');
+      let matchedPrice = fallbackPrice;
+      let matchedSku = `DF-${rowIdx}`;
+      let bestMatch = null;
+      let bestScore = 0;
+
+      for (const entry of priceLookup) {
+        // Count how many variant values appear in the row text
+        let score = 0;
+        for (const val of entry.values) {
+          // Exact word boundary match to avoid "S" matching "XS"
+          const re = new RegExp('\\b' + val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+          if (re.test(rowText)) score++;
+        }
+        if (score > bestScore || (score === bestScore && score > 0)) {
+          bestScore = score;
+          bestMatch = entry;
+        }
+      }
+
+      if (bestMatch && bestScore >= bestMatch.values.length) {
+        // Full match — all variant values found in row
+        matchedPrice = bestMatch.price;
+        matchedSku = bestMatch.skuLabel;
+      } else if (bestMatch && bestScore > 0) {
+        // Partial match — use it but log
+        matchedPrice = bestMatch.price;
+        matchedSku = bestMatch.skuLabel;
+        console.warn(`[DropFlow] Row ${rowIdx}: partial match (${bestScore}/${bestMatch.values.length}), using $${matchedPrice}`);
+      } else if (rowIdx < priceLookup.length) {
+        // Index fallback — same row order as variants
+        matchedPrice = priceLookup[rowIdx].price;
+        matchedSku = priceLookup[rowIdx].skuLabel;
+        console.warn(`[DropFlow] Row ${rowIdx}: no text match, using index fallback $${matchedPrice}`);
+      } else {
+        unmatchedRows.push(rowIdx);
+        console.warn(`[DropFlow] Row ${rowIdx}: NO MATCH, using fallback $${fallbackPrice}`);
+      }
 
       for (const input of inputs) {
         const placeholder = (input.placeholder || '').toLowerCase();
@@ -2664,7 +2713,7 @@
         if (/upc|ean|isbn|mpn|gtin|barcode|identifier/.test(hints)) continue;
 
         if (/price|amount|\$/.test(hints)) {
-          await commitInputValue(input, String(flatPrice));
+          await commitInputValue(input, String(matchedPrice));
           filledPrices++;
           priceDoneRow = true;
         } else if (/qty|quantit|stock|available/.test(hints)) {
@@ -2672,7 +2721,7 @@
           filledQuantities++;
           qtyDoneRow = true;
         } else if (/sku|custom\s*label/.test(hints)) {
-          await commitInputValue(input, `DF-FLAT-${filledSKUs}`);
+          await commitInputValue(input, matchedSku);
           filledSKUs++;
           skuDoneRow = true;
         }
@@ -2683,7 +2732,7 @@
         const priceCell = cells[colMap.price];
         const pi = priceCell?.querySelector('input[type="text"], input[type="number"], input:not([type])');
         if (pi) {
-          await commitInputValue(pi, String(flatPrice));
+          await commitInputValue(pi, String(matchedPrice));
           filledPrices++;
         }
       }
@@ -4334,12 +4383,12 @@
       return true;
     }
 
-    // FLAT PRICING: Always use the highest variant price for all rows.
-    // This simplifies the flow and avoids complex per-row column-position matching.
+    // PER-VARIANT PRICING: use each variant's own ebayPrice.
+    // Only use bulk action if all variants have the same price.
     const uniquePrices = [...new Set(skuEntries.map(e => e.price))];
-    const bulkPriceAllowed = true; // Always use flat pricing
+    const bulkPriceAllowed = uniquePrices.length === 1; // Only bulk if all prices identical
     const defaultPrice = Math.max(...uniquePrices, Number(productData.ebayPrice || 0), 0) || 9.99;
-    console.warn(`[DropFlow] FLAT PRICING: using $${defaultPrice} for all ${skuEntries.length} variants (unique prices: ${uniquePrices.join(', ')})`);
+    console.warn(`[DropFlow] PER-VARIANT PRICING: ${uniquePrices.length} unique prices (${uniquePrices.join(', ')}), bulk=${bulkPriceAllowed}`);
 
     let priceDone = false;
     if (bulkPriceAllowed) {
@@ -4377,11 +4426,46 @@
     let pricesFilled = 0;
     let qtiesFilled = 0;
     let rowIdx = 0;
-    console.warn(`[DropFlow] FLAT PRICING: filling ${rows.length} rows with $${defaultPrice}`);
+    console.warn(`[DropFlow] PER-VARIANT PRICING: filling ${rows.length} rows`);
     for (const row of rows) {
-      // FLAT PRICING: use defaultPrice for every row, no per-SKU matching needed
-      const entry = { price: defaultPrice, qty: 1 };
       rowIdx++;
+      // Match this row to a variant by reading its text content
+      const rowText = norm(row.textContent);
+      let cells = Array.from(row.querySelectorAll('td, th'));
+      if (cells.length === 0) cells = Array.from(row.children);
+      const cellTexts = cells.map(c => {
+        const clone = c.cloneNode(true);
+        (clone.querySelectorAll ? clone.querySelectorAll('input, select, button') : []).forEach(el => el.remove());
+        return norm(clone.textContent);
+      }).filter(t => t && t.length > 0 && t.length < 30);
+
+      let matchedPrice = 0;
+      for (const se of skuEntries) {
+        // Cell-level exact match
+        if (se.values.every(v => cellTexts.some(ct => ct === v || ct === v.replace(/\s+/g, '')))) {
+          matchedPrice = se.price; break;
+        }
+        // Cell-level partial match
+        if (se.values.every(v => cellTexts.some(ct => ct.includes(v) || v.includes(ct)))) {
+          matchedPrice = se.price; break;
+        }
+        // Row text regex match
+        if (se.values.every(v => {
+          const esc = v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          return new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`, 'i').test(rowText);
+        })) {
+          matchedPrice = se.price; break;
+        }
+      }
+      // Index-based fallback
+      if (matchedPrice <= 0 && (rowIdx - 1) < skuEntries.length) {
+        matchedPrice = skuEntries[rowIdx - 1].price;
+      }
+      // Last resort
+      if (matchedPrice <= 0) matchedPrice = defaultPrice;
+
+      const entry = { price: matchedPrice, qty: 1 };
+      if (rowIdx <= 5) console.warn(`[DropFlow] Row ${rowIdx}: matched price=$${matchedPrice}, cellTexts=[${cellTexts.join(',')}]`);
 
       const inputs = queryAllWithShadow('input, [contenteditable="true"]', row).filter(isElementVisible);
 
