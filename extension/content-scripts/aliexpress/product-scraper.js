@@ -713,7 +713,109 @@
    * Last-resort fallback when all data extraction (API, script tags, MAIN world) fails.
    * Finds variation selector groups (Color, Size, etc.) and builds axes + synthetic SKUs.
    */
-  function scrapeVariationsFromDom() {
+  /**
+   * Click through variant buttons in the DOM to read per-variant prices.
+   * AliExpress updates the displayed price when you select a variant.
+   * We identify which axis is the "price-varying" one (usually Size) and
+   * click each value, read the price, then assign it to matching SKUs.
+   */
+  async function enrichSkuPricesViaClicks(axes, skus) {
+    // Find all sku property groups in the DOM
+    const propGroups = document.querySelectorAll(
+      '[class*="sku-item--property"], [class*="skuItem--property"], ' +
+      '.sku-property-list, [class*="sku--property"]'
+    );
+    if (propGroups.length === 0) {
+      console.log('[DropFlow Ali] enrichSkuPricesViaClicks: no property groups found');
+      return;
+    }
+
+    // For each axis, find its DOM group by matching value names to button text
+    const axisButtonMap = new Map(); // axisName -> Map<valueName, buttonElement>
+    for (const axis of axes) {
+      const valueNames = new Set(axis.values.map(v => v.name.toLowerCase()));
+      for (const group of propGroups) {
+        const buttons = group.querySelectorAll(
+          '[class*="sku-item--image"], [class*="skuItem--image"], ' +
+          '[class*="sku-item--text"], [class*="skuItem--text"], ' +
+          'button, [role="button"], span[tabindex], div[tabindex], img[title]'
+        );
+        let matchCount = 0;
+        const btnMap = new Map();
+        for (const btn of buttons) {
+          const text = (btn.getAttribute('title') || btn.textContent || '').trim().toLowerCase();
+          if (text && valueNames.has(text)) {
+            matchCount++;
+            btnMap.set(text, btn);
+          }
+        }
+        // If we matched most values, this is the right group
+        if (matchCount >= Math.min(valueNames.size, 2)) {
+          axisButtonMap.set(axis.name, btnMap);
+          break;
+        }
+      }
+    }
+
+    if (axisButtonMap.size === 0) {
+      console.log('[DropFlow Ali] enrichSkuPricesViaClicks: could not match any axis to DOM buttons');
+      return;
+    }
+
+    // Determine which axis to iterate — prefer the one that's NOT color (size usually varies price)
+    let priceAxis = null;
+    for (const axis of axes) {
+      if (axisButtonMap.has(axis.name) && !/colou?r/i.test(axis.name)) {
+        priceAxis = axis;
+        break;
+      }
+    }
+    // Fallback: use any axis we have buttons for
+    if (!priceAxis) {
+      for (const axis of axes) {
+        if (axisButtonMap.has(axis.name)) { priceAxis = axis; break; }
+      }
+    }
+    if (!priceAxis) return;
+
+    const btnMap = axisButtonMap.get(priceAxis.name);
+    console.log(`[DropFlow Ali] enrichSkuPricesViaClicks: clicking through "${priceAxis.name}" (${btnMap.size} buttons)`);
+
+    const priceByValue = new Map();
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+    for (const val of priceAxis.values) {
+      const btn = btnMap.get(val.name.toLowerCase());
+      if (!btn) continue;
+
+      btn.click();
+      await sleep(600); // Wait for React to update the price display
+
+      const price = getPriceFromDom();
+      if (price > 0) {
+        priceByValue.set(val.name, price);
+        console.log(`[DropFlow Ali]   ${priceAxis.name}="${val.name}" → $${price}`);
+      }
+    }
+
+    if (priceByValue.size === 0) {
+      console.log('[DropFlow Ali] enrichSkuPricesViaClicks: no prices captured');
+      return;
+    }
+
+    // Assign per-variant prices to SKUs
+    let updated = 0;
+    for (const sku of skus) {
+      const valName = sku.specifics[priceAxis.name];
+      if (valName && priceByValue.has(valName)) {
+        sku.price = priceByValue.get(valName);
+        updated++;
+      }
+    }
+    console.log(`[DropFlow Ali] enrichSkuPricesViaClicks: updated ${updated}/${skus.length} SKU prices`);
+  }
+
+  async function scrapeVariationsFromDom() {
     console.log('[DropFlow Ali] scrapeVariationsFromDom() called');
     let axes = [];
 
@@ -904,6 +1006,13 @@
     });
 
     if (skus.length <= 1) return null;
+
+    // --- Enrich per-SKU prices by clicking variant buttons in DOM ---
+    try {
+      await enrichSkuPricesViaClicks(axes, skus);
+    } catch (e) {
+      console.warn(`[DropFlow Ali] Price enrichment failed, using display price for all: ${e.message}`);
+    }
 
     // Build imagesByValue
     const imagesByValue = {};
@@ -1242,7 +1351,7 @@
     if (!data.variations?.hasVariations) {
       try {
         console.log('[DropFlow Ali] Calling scrapeVariationsFromDom (last resort)...');
-        const domVariations = scrapeVariationsFromDom();
+        const domVariations = await scrapeVariationsFromDom();
         if (domVariations?.hasVariations) {
           data.variations = domVariations;
           console.log(`[DropFlow Ali] Variations from DOM: ${domVariations.axes.map(a => `${a.name}(${a.values.length})`).join(' × ')} = ${domVariations.skus.length} SKUs`);
