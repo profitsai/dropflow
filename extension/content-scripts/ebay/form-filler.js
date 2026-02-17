@@ -4428,7 +4428,18 @@
             const name = (el.getAttribute('name') || '').toLowerCase();
             return /price|quantity|qty/i.test(`${placeholder} ${ariaLabel} ${name}`);
           });
-        return priceInputs.length > 0;
+        if (priceInputs.length > 0) return true;
+        // Also detect lazy-rendered tables: look for table rows with variation text
+        // next to the Save and close button (combinations table without active inputs)
+        const tables = queryAllWithShadow('table', root).filter(isElementVisible);
+        for (const t of tables) {
+          const trs = t.querySelectorAll('tbody tr, tr');
+          if (trs.length >= 3) {
+            const headerText = (t.querySelector('thead, tr:first-child')?.textContent || '').toLowerCase();
+            if (/price|quantity|qty|sku|variation/i.test(headerText)) return true;
+          }
+        }
+        return false;
       };
 
       let saveCloseBtn = null;
@@ -4641,8 +4652,150 @@
     const qtyDone = await useBulkAction(/enter\s+quantity|set\s+quantity|quantity\s+for\s+all/i, 1, 'qty');
 
     // Per-row fill for price/qty (works whether bulk action exists or not).
-    const rows = queryAllWithShadow('tr, [role="row"], [class*="variation" i][class*="row" i]', doc)
+    let rows = queryAllWithShadow('tr, [role="row"], [class*="variation" i][class*="row" i]', doc)
       .filter(r => isElementVisible(r) && queryAllWithShadow('input, [contenteditable="true"]', r).length > 0);
+
+    // LAZY-RENDER FIX: If few/no rows have inputs, the builder likely lazy-renders
+    // inputs only for the active row. Find ALL data rows and click each one to activate.
+    const allDataRows = queryAllWithShadow('tr, [role="row"], [class*="variation" i][class*="row" i]', doc)
+      .filter(r => {
+        if (!isElementVisible(r)) return false;
+        // Skip header rows
+        if (r.closest('thead')) return false;
+        const tag = r.querySelector('th');
+        if (tag && !r.querySelector('td')) return false;
+        // Must have text content (variation names)
+        const text = (r.textContent || '').trim();
+        return text.length > 2 && text.length < 500;
+      });
+
+    if (rows.length < allDataRows.length * 0.5 && allDataRows.length >= 2) {
+      console.warn(`[DropFlow] LAZY-RENDER detected: ${rows.length} rows with inputs vs ${allDataRows.length} total data rows. Activating rows by clicking...`);
+      await logVariationStep('variationBuilder:fillPricing:lazyRenderDetected', {
+        rowsWithInputs: rows.length,
+        totalDataRows: allDataRows.length
+      });
+
+      // Click each row to activate it, fill its inputs, then move on
+      let lazyPricesFilled = 0;
+      let lazyQtiesFilled = 0;
+      for (let ri = 0; ri < allDataRows.length; ri++) {
+        const row = allDataRows[ri];
+
+        // Read row text BEFORE clicking (cell text may change when inputs appear)
+        let cells = Array.from(row.querySelectorAll('td, th'));
+        if (cells.length === 0) cells = Array.from(row.children);
+        const cellTexts = cells.map(c => {
+          const clone = c.cloneNode(true);
+          (clone.querySelectorAll ? clone.querySelectorAll('input, select, button') : []).forEach(el => el.remove());
+          return norm(clone.textContent);
+        }).filter(t => t && t.length > 0 && t.length < 30);
+        const rowText = norm(row.textContent);
+
+        // Match variant price
+        let matchedPrice = 0;
+        for (const se of skuEntries) {
+          if (se.values.every(v => cellTexts.some(ct => ct === v || ct === v.replace(/\s+/g, '')))) {
+            matchedPrice = se.price; break;
+          }
+          if (se.values.every(v => cellTexts.some(ct => ct.includes(v) || v.includes(ct)))) {
+            matchedPrice = se.price; break;
+          }
+          if (se.values.every(v => {
+            const esc = v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            return new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`, 'i').test(rowText);
+          })) {
+            matchedPrice = se.price; break;
+          }
+        }
+        if (matchedPrice <= 0 && ri < skuEntries.length) matchedPrice = skuEntries[ri].price;
+        if (matchedPrice <= 0) matchedPrice = defaultPrice;
+
+        // Click the row to activate lazy-rendered inputs
+        simulateClick(row);
+        // Also try clicking specific cells (some tables need cell-level click)
+        if (cells.length > 0) {
+          const priceColIdx = cells.findIndex(c => {
+            const t = norm(c.textContent);
+            return /^\$?\d+\.?\d*$/.test(t.replace(/\s/g, '')) || /price/i.test(c.className || '');
+          });
+          if (priceColIdx >= 0) simulateClick(cells[priceColIdx]);
+        }
+
+        // Wait for inputs to appear (up to 2s)
+        let rowInputs = [];
+        for (let wi = 0; wi < 20; wi++) {
+          await sleep(100);
+          rowInputs = queryAllWithShadow('input, [contenteditable="true"]', row).filter(isElementVisible);
+          if (rowInputs.length > 0) break;
+        }
+
+        if (rowInputs.length === 0) {
+          if (ri < 3) console.warn(`[DropFlow] Lazy row[${ri}]: no inputs appeared after click. cellTexts=[${cellTexts.join(',')}]`);
+          continue;
+        }
+
+        // Fill price input
+        for (const input of rowInputs) {
+          const h = `${input.placeholder || ''} ${input.getAttribute?.('aria-label') || ''} ${input.name || ''} ${input.id || ''} ${input.className || ''} ${input.getAttribute?.('cn') || ''}`.toLowerCase();
+          if (/upc|ean|isbn|mpn|gtin|barcode|identifier/.test(h)) continue;
+          if (/price|amount|\$|aud/.test(h)) {
+            const existing = Number(String(input.value || input.textContent || '').replace(/[^0-9.]/g, ''));
+            if (!existing || Math.abs(existing - matchedPrice) > 0.01) {
+              if (input.isContentEditable) {
+                input.textContent = String(matchedPrice);
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+              } else {
+                await commitInputValue(input, String(matchedPrice));
+              }
+              lazyPricesFilled++;
+            } else {
+              lazyPricesFilled++;
+            }
+          } else if (/qty|quantit|stock|available/.test(h)) {
+            const existingQ = Number(String(input.value || input.textContent || '').replace(/[^0-9]/g, ''));
+            if (existingQ !== 1) {
+              if (input.isContentEditable) {
+                input.textContent = '1';
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+              } else {
+                await commitInputValue(input, '1');
+              }
+              lazyQtiesFilled++;
+            }
+          }
+        }
+
+        if (ri < 5) console.warn(`[DropFlow] Lazy row[${ri}]: price=$${matchedPrice}, inputs=${rowInputs.length}, cellTexts=[${cellTexts.join(',')}]`);
+      }
+
+      console.warn(`[DropFlow] Lazy-render fill complete: ${lazyPricesFilled} prices, ${lazyQtiesFilled} quantities out of ${allDataRows.length} rows`);
+      await logVariationStep('variationBuilder:fillPricing:lazyRenderDone', {
+        pricesFilled: lazyPricesFilled,
+        qtiesFilled: lazyQtiesFilled,
+        totalRows: allDataRows.length
+      });
+
+      // If we filled prices via lazy-render, skip the normal per-row fill
+      if (lazyPricesFilled > 0) {
+        pricesFilled = lazyPricesFilled;
+        qtiesFilled = lazyQtiesFilled;
+        // Jump to the end
+        await logVariationStep('variationBuilder:fillPricing:done', {
+          priceDone,
+          qtyDone,
+          pricesFilled,
+          qtiesFilled,
+          uniquePriceCount: uniquePrices.length,
+          method: 'lazy-render-click'
+        });
+        return;
+      }
+
+      // Re-query rows with inputs (clicking may have activated some)
+      rows = queryAllWithShadow('tr, [role="row"], [class*="variation" i][class*="row" i]', doc)
+        .filter(r => isElementVisible(r) && queryAllWithShadow('input, [contenteditable="true"]', r).length > 0);
+    }
 
     // Build column-index map from table header (fallback for unlabeled inputs)
     const columnMap = { price: -1, qty: -1, upc: -1, sku: -1 };
