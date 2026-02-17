@@ -4131,6 +4131,90 @@
     };
 
     builderRoot = findBuilderRoot();
+
+    // === PRE-EXISTING VARIATIONS DETECTION ===
+    // When eBay auto-populates variation rows based on product category, the builder
+    // opens directly on the pricing/combinations table (no attribute selection step).
+    // Detect this state and skip straight to filling prices + Save and close.
+    {
+      const pricingInputs = queryAllWithShadow('input[type="text"], input[type="number"], input:not([type])', activeDoc)
+        .filter(el => {
+          if (!isElementVisible(el)) return false;
+          const ph = (el.getAttribute('placeholder') || '').toLowerCase();
+          const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+          const name = (el.getAttribute('name') || '').toLowerCase();
+          return /price|quantity|qty/i.test(`${ph} ${ariaLabel} ${name}`);
+        });
+      const saveCloseBtn = queryAllWithShadow('button, [role="button"]', activeDoc)
+        .find(b => isElementVisible(b) && /save\s+and\s+close/i.test((b.textContent || '').trim()));
+      const addTrigger = findAddAttributeTrigger ? findAddAttributeTrigger() : null;
+
+      if (pricingInputs.length >= 3 && saveCloseBtn && !addTrigger) {
+        console.warn(`[DropFlow] Pre-existing variations detected: ${pricingInputs.length} pricing inputs, Save and close found, no Add button`);
+        await logVariationStep('variationBuilder:preExistingVariations', {
+          pricingInputCount: pricingInputs.length,
+          hasSaveClose: true
+        });
+
+        // Fill per-SKU pricing in the existing table
+        if (productData?.variations?.skus?.length > 0) {
+          try {
+            await fillBuilderPricingTable(activeDoc, productData);
+          } catch (e) {
+            console.error('[DropFlow] Pre-existing variations pricing fill error:', e.message, e.stack);
+          }
+        }
+
+        // Clear UPC fields
+        try {
+          const upcInputs = queryAllWithShadow('input[cn="upc"], input[cn="UPC"]', activeDoc);
+          for (const upcInput of upcInputs) {
+            const dropdownLink = upcInput.parentElement?.querySelector('a.pull-down, a[role="button"]');
+            if (dropdownLink) {
+              simulateClick(dropdownLink);
+              await sleep(300);
+              const menu = upcInput.closest('span')?.querySelector('ul[role="menu"]');
+              if (menu) {
+                const dnaOption = Array.from(menu.querySelectorAll('a[role="menuitem"]'))
+                  .find(a => /does not apply/i.test(a.textContent));
+                if (dnaOption) { simulateClick(dnaOption); await sleep(200); }
+              }
+            } else {
+              const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+              if (nativeSetter) nativeSetter.call(upcInput, 'Does not apply');
+              else upcInput.value = 'Does not apply';
+              upcInput.dispatchEvent(new Event('input', { bubbles: true }));
+              upcInput.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          }
+          if (upcInputs.length > 0) console.log(`[DropFlow] Set ${upcInputs.length} UPC fields to "Does not apply"`);
+        } catch (e) { console.warn('[DropFlow] UPC clearing error:', e.message); }
+
+        // Upload photos if available
+        if (productData.images && productData.images.length > 0) {
+          try { await uploadPhotosViaMskuBuilder(productData); } catch (e) { console.warn('[DropFlow] Builder photo upload error:', e.message); }
+        }
+
+        // Click Save and close
+        simulateClick(saveCloseBtn);
+        __dropflowVariationSaveCloseTs = Date.now();
+        await logVariationStep('variationBuilder:preExistingSaveAndCloseClicked', {});
+        console.warn('[DropFlow] Pre-existing variations: clicked Save and close');
+
+        // Wait for builder to close
+        for (let i = 0; i < 40; i++) {
+          await sleep(500);
+          const ctx = detectVariationBuilderContext();
+          if (!ctx.isBuilder) break;
+          if (!document.contains(activeDoc.documentElement || activeDoc.body)) break;
+        }
+
+        await releaseCrossContextLock();
+        try { await chrome.storage.local.set({ dropflow_builder_complete: { ts: Date.now(), draftId: window.location.href } }); } catch (_) {}
+        return true;
+      }
+    }
+
     let chips = readAttributeChips();
 
     console.warn(`[DropFlow] Builder state: chips=[${chips.map(c => c.text).join(', ')}], desired=[${desiredAxes.map(a => a.name).join(', ')}]`);
