@@ -8668,7 +8668,9 @@
         (primarySignals >= 3 && (hasAdd || hasCreateOwn || hasContinue)) ||
         (hasCreateHeader && hasAttributes && hasOptions) ||
         (score >= 7 && (hasAdd || hasCreateOwn || hasContinue)) ||
-        (hasContinue && hasVariationsTitle && (hasAdd || hasCreateOwn) && score >= 4);
+        (hasContinue && hasVariationsTitle && (hasAdd || hasCreateOwn) && score >= 4) ||
+        // Lenient: bulkedit.ebay.*/msku with key DOM signals = builder (iframe may not render all buttons)
+        (isBulkEditHost && isMskuUrl && hasAttributes && hasOptions && hasVariationsTitle);
 
       if (!best || score > best.score) {
         best = {
