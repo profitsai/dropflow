@@ -1,0 +1,65 @@
+[9:55:28 PM] Connecting to browser...
+[9:55:28 PM] Found 1 tabs
+[9:55:29 PM] Reloading extension...
+[9:55:35 PM] Extension reloaded
+[9:55:38 PM] Markup set to 30%
+[9:55:38 PM] Triggering bulk listing for: https://www.aliexpress.com/item/1005009953521226.html
+[9:55:38 PM] Trigger result: {"success":true,"message":"Started AliExpress bulk listing 1 items"}
+[9:55:43 PM] Screenshot: 01-after-trigger
+[9:55:48 PM] Phase: AliExpress scraping in progress...
+[9:55:48 PM] Screenshot: 02-ali-scrape-0
+[9:55:48 PM] Screenshot: monitor-0
+[9:55:48 PM] Storage: {"pending":[],"dfKeys":["dropflow_price_markup"],"total":11}
+[9:55:53 PM] Phase: AliExpress scraping in progress...
+[9:55:58 PM] Phase: AliExpress scraping in progress...
+[9:56:03 PM] Phase: AliExpress scraping in progress...
+[9:56:08 PM] Phase: AliExpress scraping in progress...
+[9:56:13 PM] Phase: AliExpress scraping in progress...
+[9:56:18 PM] Phase: AliExpress scraping in progress...
+[9:56:18 PM] Screenshot: 02-ali-scrape-6
+[9:56:18 PM] Screenshot: monitor-6
+[9:56:18 PM] Storage: {"pending":[],"dfKeys":["dropflow_price_markup"],"total":11}
+[9:56:38 PM] Phase: eBay prelist page
+[9:56:43 PM] Phase: eBay prelist page
+[9:56:48 PM] Phase: eBay prelist page
+[9:56:48 PM] Screenshot: monitor-12
+[9:56:48 PM] Storage: {"pending":["pendingListing_1373278065"],"dfKeys":["dropflow_price_markup"],"total":12}
+[9:56:53 PM] Phase: eBay prelist page
+[9:57:03 PM] Phase: eBay prelist page
+[9:57:08 PM] Phase: eBay prelist page
+[9:57:13 PM] Phase: eBay prelist page
+[9:57:18 PM] Phase: eBay prelist page
+[9:57:18 PM] Screenshot: monitor-18
+[9:57:18 PM] Storage: {"pending":[],"dfKeys":["dropflow_price_markup"],"total":11}
+[9:57:23 PM] Phase: eBay prelist page
+[9:57:28 PM] Phase: eBay prelist page
+[9:57:33 PM] Phase: eBay prelist page
+[9:57:38 PM] Phase: eBay prelist page
+[9:57:44 PM] Phase: eBay prelist page
+[9:57:49 PM] Phase: eBay prelist page
+[9:57:49 PM] Screenshot: monitor-24
+[9:57:49 PM] Storage: {"pending":[],"dfKeys":["dropflow_price_markup"],"total":11}
+[9:57:54 PM] Phase: eBay prelist page
+[9:57:59 PM] Phase: eBay prelist page
+[9:58:04 PM] Phase: eBay prelist page
+[9:58:09 PM] Phase: eBay prelist page
+[9:58:14 PM] Phase: eBay prelist page
+[9:58:19 PM] Phase: eBay prelist page
+[9:58:19 PM] Screenshot: monitor-30
+[9:58:19 PM] Storage: {"pending":[],"dfKeys":["dropflow_price_markup"],"total":11}
+[9:58:24 PM] Phase: eBay prelist page
+[9:58:29 PM] Phase: eBay prelist page
+[9:58:34 PM] Phase: eBay prelist page
+[9:58:39 PM] Phase: eBay prelist page
+[9:58:44 PM] Phase: eBay prelist page
+[9:58:49 PM] Phase: eBay prelist page
+[9:58:49 PM] Screenshot: monitor-36
+[9:58:49 PM] Storage: {"pending":[],"dfKeys":["dropflow_price_markup"],"total":11}
+[9:58:54 PM] Phase: eBay prelist page
+[9:58:59 PM] Phase: eBay prelist page
+[9:59:04 PM] Phase: eBay prelist page
+[9:59:09 PM] Phase: eBay prelist page
+[9:59:14 PM] Phase: eBay prelist page
+[9:59:19 PM] Phase: eBay prelist page
+[9:59:19 PM] Screenshot: monitor-42
+[9:59:19 PM] Storage: {"pending":[],"dfKeys":["dropflow_price_markup"],"total":11}

@@ -1,0 +1,125 @@
+{
+  "filledCount": 15,
+  "rows": [
+    {
+      "size": "XS",
+      "colour": "Red",
+      "price": "8.45",
+      "qty": "1",
+      "expectedPrice": 8.45,
+      "expectedQty": 1
+    },
+    {
+      "size": "XS",
+      "colour": "Black",
+      "price": "9.10",
+      "qty": "1",
+      "expectedPrice": 9.1,
+      "expectedQty": 1
+    },
+    {
+      "size": "XS",
+      "colour": "Blue",
+      "price": "8.84",
+      "qty": "1",
+      "expectedPrice": 8.84,
+      "expectedQty": 1
+    },
+    {
+      "size": "S",
+      "colour": "Red",
+      "price": "9.36",
+      "qty": "1",
+      "expectedPrice": 9.36,
+      "expectedQty": 1
+    },
+    {
+      "size": "S",
+      "colour": "Black",
+      "price": "10.14",
+      "qty": "0",
+      "expectedPrice": 10.14,
+      "expectedQty": 0
+    },
+    {
+      "size": "S",
+      "colour": "Blue",
+      "price": "9.75",
+      "qty": "1",
+      "expectedPrice": 9.75,
+      "expectedQty": 1
+    },
+    {
+      "size": "M",
+      "colour": "Red",
+      "price": "11.05",
+      "qty": "1",
+      "expectedPrice": 11.05,
+      "expectedQty": 1
+    },
+    {
+      "size": "M",
+      "colour": "Black",
+      "price": "11.70",
+      "qty": "1",
+      "expectedPrice": 11.7,
+      "expectedQty": 1
+    },
+    {
+      "size": "M",
+      "colour": "Blue",
+      "price": "11.44",
+      "qty": "1",
+      "expectedPrice": 11.44,
+      "expectedQty": 1
+    },
+    {
+      "size": "L",
+      "colour": "Red",
+      "price": "13.00",
+      "qty": "0",
+      "expectedPrice": 13,
+      "expectedQty": 0
+    },
+    {
+      "size": "L",
+      "colour": "Black",
+      "price": "14.30",
+      "qty": "1",
+      "expectedPrice": 14.3,
+      "expectedQty": 1
+    },
+    {
+      "size": "L",
+      "colour": "Blue",
+      "price": "13.65",
+      "qty": "0",
+      "expectedPrice": 13.65,
+      "expectedQty": 0
+    },
+    {
+      "size": "XL",
+      "colour": "Red",
+      "price": "16.25",
+      "qty": "0",
+      "expectedPrice": 16.25,
+      "expectedQty": 0
+    },
+    {
+      "size": "XL",
+      "colour": "Black",
+      "price": "17.55",
+      "qty": "1",
+      "expectedPrice": 17.55,
+      "expectedQty": 1
+    },
+    {
+      "size": "XL",
+      "colour": "Blue",
+      "price": "16.90",
+      "qty": "1",
+      "expectedPrice": 16.9,
+      "expectedQty": 1
+    }
+  ]
+}

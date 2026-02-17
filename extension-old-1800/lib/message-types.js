@@ -1,0 +1,117 @@
+/**
+ * Message types for chrome.runtime.sendMessage communication.
+ * All messages use { type: MSG_TYPE, ...payload }
+ */
+
+// === Content Script → Background ===
+export const SCRAPE_AMAZON_PRODUCT = 'SCRAPE_AMAZON_PRODUCT';
+export const AMAZON_PRODUCT_DATA = 'AMAZON_PRODUCT_DATA';
+export const FILL_EBAY_FORM = 'FILL_EBAY_FORM';
+export const EBAY_FORM_FILLED = 'EBAY_FORM_FILLED';
+export const READ_EBAY_LISTING = 'READ_EBAY_LISTING';
+export const EBAY_LISTING_DATA = 'EBAY_LISTING_DATA';
+
+// === Bulk Poster (Amazon) ===
+export const START_BULK_LISTING = 'START_BULK_LISTING';
+export const PAUSE_BULK_LISTING = 'PAUSE_BULK_LISTING';
+export const RESUME_BULK_LISTING = 'RESUME_BULK_LISTING';
+export const TERMINATE_BULK_LISTING = 'TERMINATE_BULK_LISTING';
+export const BULK_LISTING_PROGRESS = 'BULK_LISTING_PROGRESS';
+export const BULK_LISTING_RESULT = 'BULK_LISTING_RESULT';
+export const BULK_LISTING_COMPLETE = 'BULK_LISTING_COMPLETE';
+
+// === AliExpress Content Script → Background ===
+export const SCRAPE_ALIEXPRESS_PRODUCT = 'SCRAPE_ALIEXPRESS_PRODUCT';
+export const ALIEXPRESS_PRODUCT_DATA = 'ALIEXPRESS_PRODUCT_DATA';
+
+// === AliExpress Bulk Lister ===
+export const START_ALI_BULK_LISTING = 'START_ALI_BULK_LISTING';
+export const PAUSE_ALI_BULK_LISTING = 'PAUSE_ALI_BULK_LISTING';
+export const RESUME_ALI_BULK_LISTING = 'RESUME_ALI_BULK_LISTING';
+export const TERMINATE_ALI_BULK_LISTING = 'TERMINATE_ALI_BULK_LISTING';
+export const ALI_BULK_LISTING_PROGRESS = 'ALI_BULK_LISTING_PROGRESS';
+export const ALI_BULK_LISTING_RESULT = 'ALI_BULK_LISTING_RESULT';
+export const ALI_BULK_LISTING_COMPLETE = 'ALI_BULK_LISTING_COMPLETE';
+
+// === Title Builder ===
+export const GENERATE_TITLES = 'GENERATE_TITLES';
+export const BUILD_SEO_TITLE = 'BUILD_SEO_TITLE';
+export const TITLES_GENERATED = 'TITLES_GENERATED';
+export const TFIDF_RESULT = 'TFIDF_RESULT';
+
+// === Boost My Listings ===
+export const END_LOW_PERFORMERS = 'END_LOW_PERFORMERS';
+export const SELL_SIMILAR = 'SELL_SIMILAR';
+export const BULK_REVISE = 'BULK_REVISE';
+export const SEND_OFFERS = 'SEND_OFFERS';
+export const REVIEW_OFFERS = 'REVIEW_OFFERS';
+export const BOOST_PROGRESS = 'BOOST_PROGRESS';
+export const BOOST_COMPLETE = 'BOOST_COMPLETE';
+export const SCHEDULE_BOOST = 'SCHEDULE_BOOST';
+export const CANCEL_SCHEDULE = 'CANCEL_SCHEDULE';
+export const CANCEL_BOOST = 'CANCEL_BOOST';
+export const SCRAPE_ACTIVE_LISTINGS_FULL = 'SCRAPE_ACTIVE_LISTINGS_FULL';
+
+// === Competitor Research ===
+export const RESEARCH_COMPETITOR = 'RESEARCH_COMPETITOR';
+export const STOP_RESEARCH = 'STOP_RESEARCH';
+export const COMPETITOR_RESULT = 'COMPETITOR_RESULT';
+export const COMPETITOR_PROGRESS = 'COMPETITOR_PROGRESS';
+export const COMPETITOR_COMPLETE = 'COMPETITOR_COMPLETE';
+
+// === ChatGPT ===
+export const ASK_CHATGPT = 'ASK_CHATGPT';
+export const CHATGPT_RESPONSE = 'CHATGPT_RESPONSE';
+
+// === Description Generation ===
+export const GENERATE_DESCRIPTION = 'GENERATE_DESCRIPTION';
+
+// === Item Specifics AI Generation ===
+export const GENERATE_ITEM_SPECIFICS = 'GENERATE_ITEM_SPECIFICS';
+
+// === eBay Draft API Header Interception ===
+export const GET_EBAY_HEADERS = 'GET_EBAY_HEADERS';
+
+// === Settings ===
+export const GET_SETTINGS = 'GET_SETTINGS';
+export const SAVE_SETTINGS = 'SAVE_SETTINGS';
+export const SETTINGS_UPDATED = 'SETTINGS_UPDATED';
+
+// === Utility ===
+export const FETCH_IMAGE = 'FETCH_IMAGE';
+export const UPLOAD_EBAY_IMAGE = 'UPLOAD_EBAY_IMAGE';
+
+// === Stock & Price Monitor ===
+export const ADD_TRACKED_PRODUCT = 'ADD_TRACKED_PRODUCT';
+export const REMOVE_TRACKED_PRODUCT = 'REMOVE_TRACKED_PRODUCT';
+export const UPDATE_TRACKED_PRODUCT = 'UPDATE_TRACKED_PRODUCT';
+export const GET_TRACKED_PRODUCTS = 'GET_TRACKED_PRODUCTS';
+export const START_MONITOR = 'START_MONITOR';
+export const STOP_MONITOR = 'STOP_MONITOR';
+export const CHECK_PRODUCT_NOW = 'CHECK_PRODUCT_NOW';
+export const MONITOR_CHECK_RESULT = 'MONITOR_CHECK_RESULT';
+export const MONITOR_PROGRESS = 'MONITOR_PROGRESS';
+export const MONITOR_ALERT = 'MONITOR_ALERT';
+export const GET_MONITOR_SETTINGS = 'GET_MONITOR_SETTINGS';
+export const SAVE_MONITOR_SETTINGS = 'SAVE_MONITOR_SETTINGS';
+export const SCRAPE_ACTIVE_LISTINGS = 'SCRAPE_ACTIVE_LISTINGS';
+
+// === SKU Backfiller ===
+export const SET_CUSTOM_LABEL = 'SET_CUSTOM_LABEL';
+export const CUSTOM_LABEL_SET = 'CUSTOM_LABEL_SET';
+export const READ_CUSTOM_LABEL = 'READ_CUSTOM_LABEL';
+export const START_SKU_BACKFILL = 'START_SKU_BACKFILL';
+export const PAUSE_SKU_BACKFILL = 'PAUSE_SKU_BACKFILL';
+export const TERMINATE_SKU_BACKFILL = 'TERMINATE_SKU_BACKFILL';
+export const SKU_BACKFILL_PROGRESS = 'SKU_BACKFILL_PROGRESS';
+export const SKU_BACKFILL_RESULT = 'SKU_BACKFILL_RESULT';
+export const SKU_BACKFILL_COMPLETE = 'SKU_BACKFILL_COMPLETE';
+
+// === eBay Listing Revision (Monitor Actions) ===
+export const REVISE_EBAY_LISTING = 'REVISE_EBAY_LISTING';
+export const EBAY_LISTING_REVISED = 'EBAY_LISTING_REVISED';
+
+// === General ===
+export const PROGRESS_UPDATE = 'PROGRESS_UPDATE';
+export const ERROR = 'ERROR';
+export const OPEN_PAGE = 'OPEN_PAGE';

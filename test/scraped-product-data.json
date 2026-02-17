@@ -1,0 +1,191 @@
+{
+  "asin": "1005009953521226",
+  "title": "Warm Fleece Dog Coat With Hooded Waterproof Winter Pet Puppy Clothes For Small Medium Dogs Cats French Bulldog Hoodie Costume",
+  "price": 8.5,
+  "currency": "USD",
+  "images": [
+    "https://ae-pic-a1.aliexpress-media.com/kf/S1cf750c0a3554bbdae157dd2c4d92e26C.jpgq75.jpg_.avif",
+    "https://ae-pic-a1.aliexpress-media.com/kf/S4d3b3052b6c243f08154f21134ac2b8fv/48x48.png_.avif",
+    "https://ae-pic-a1.aliexpress-media.com/kf/S1cf750c0a3554bbdae157dd2c4d92e26C.jpgq75.jpg_.avif",
+    "https://ae-pic-a1.aliexpress-media.com/kf/Sc5bfa0e7793d4562a3ffe0bbe3a661166.jpgq75.jpg_.avif",
+    "https://ae-pic-a1.aliexpress-media.com/kf/Sf7831f8ffa854eccbd953391af468128t.jpgq75.jpg_.avif",
+    "https://ae-pic-a1.aliexpress-media.com/kf/Sfcb676f3b6ab4f6baf6d5e5e013627ddz.jpgq75.jpg_.avif",
+    "https://ae-pic-a1.aliexpress-media.com/kf/S84f2d74dd2a742f4904f212aa53aad77H.jpgq75.jpg_.avif",
+    "https://ae-pic-a1.aliexpress-media.com/kf/Se33197e157b04d5485f24224fa4601e8H.jpgq75.jpg_.avif",
+    "https://ae-pic-a1.aliexpress-media.com/kf/S15d6dab586f2486c8ee5d20704582899a.jpgq75.jpg_.avif",
+    "https://ae-pic-a1.aliexpress-media.com/kf/Sdd42651e632041e797aa7d5531dd9f091.jpgq75.jpg_.avif",
+    "https://ae-pic-a1.aliexpress-media.com/kf/Sb89fb2276757499bb4efd5f33b297367c.jpgq75.jpg_.avif",
+    "https://ae-pic-a1.aliexpress-media.com/kf/S1cf750c0a3554bbdae157dd2c4d92e26C.jpgq75.jpg_.avif"
+  ],
+  "description": "DescriptionReport Item",
+  "bulletPoints": [],
+  "availability": {
+    "inStock": true,
+    "quantity": null,
+    "text": "AliExpress"
+  },
+  "seller": "",
+  "isFBA": false,
+  "category": "",
+  "rating": null,
+  "reviewCount": 0,
+  "url": "https://www.aliexpress.com/item/1005009953521226.html",
+  "variations": {
+    "hasVariations": true,
+    "axes": [
+      {
+        "name": "Color",
+        "values": [
+          {
+            "name": "Red",
+            "image": "https://ae-pic-a1.aliexpress-media.com/kf/S15d6dab586f2486c8ee5d20704582899a.jpg"
+          },
+          {
+            "name": "Black",
+            "image": "https://ae-pic-a1.aliexpress-media.com/kf/Sdd42651e632041e797aa7d5531dd9f091.jpg"
+          },
+          {
+            "name": "Blue",
+            "image": "https://ae-pic-a1.aliexpress-media.com/kf/S1cf750c0a3554bbdae157dd2c4d92e26C.jpg"
+          }
+        ]
+      },
+      {
+        "name": "Size",
+        "values": [
+          {
+            "name": "XS"
+          },
+          {
+            "name": "S"
+          },
+          {
+            "name": "M"
+          },
+          {
+            "name": "L"
+          },
+          {
+            "name": "XL"
+          }
+        ]
+      }
+    ],
+    "skus": [
+      {
+        "color": "Red",
+        "size": "XS",
+        "price": 6.5,
+        "stock": 5,
+        "ebayPrice": 8.45
+      },
+      {
+        "color": "Red",
+        "size": "S",
+        "price": 7.2,
+        "stock": 3,
+        "ebayPrice": 9.36
+      },
+      {
+        "color": "Red",
+        "size": "M",
+        "price": 8.5,
+        "stock": 10,
+        "ebayPrice": 11.05
+      },
+      {
+        "color": "Red",
+        "size": "L",
+        "price": 10,
+        "stock": 0,
+        "ebayPrice": 13
+      },
+      {
+        "color": "Red",
+        "size": "XL",
+        "price": 12.5,
+        "stock": 0,
+        "ebayPrice": 16.25
+      },
+      {
+        "color": "Black",
+        "size": "XS",
+        "price": 7,
+        "stock": 2,
+        "ebayPrice": 9.1
+      },
+      {
+        "color": "Black",
+        "size": "S",
+        "price": 7.8,
+        "stock": 0,
+        "ebayPrice": 10.14
+      },
+      {
+        "color": "Black",
+        "size": "M",
+        "price": 9,
+        "stock": 8,
+        "ebayPrice": 11.7
+      },
+      {
+        "color": "Black",
+        "size": "L",
+        "price": 11,
+        "stock": 4,
+        "ebayPrice": 14.3
+      },
+      {
+        "color": "Black",
+        "size": "XL",
+        "price": 13.5,
+        "stock": 1,
+        "ebayPrice": 17.55
+      },
+      {
+        "color": "Blue",
+        "size": "XS",
+        "price": 6.8,
+        "stock": 3,
+        "ebayPrice": 8.84
+      },
+      {
+        "color": "Blue",
+        "size": "S",
+        "price": 7.5,
+        "stock": 5,
+        "ebayPrice": 9.75
+      },
+      {
+        "color": "Blue",
+        "size": "M",
+        "price": 8.8,
+        "stock": 7,
+        "ebayPrice": 11.44
+      },
+      {
+        "color": "Blue",
+        "size": "L",
+        "price": 10.5,
+        "stock": 0,
+        "ebayPrice": 13.65
+      },
+      {
+        "color": "Blue",
+        "size": "XL",
+        "price": 13,
+        "stock": 2,
+        "ebayPrice": 16.9
+      }
+    ],
+    "imagesByValue": {
+      "Red": "https://ae-pic-a1.aliexpress-media.com/kf/S15d6dab586f2486c8ee5d20704582899a.jpg",
+      "Black": "https://ae-pic-a1.aliexpress-media.com/kf/Sdd42651e632041e797aa7d5531dd9f091.jpg",
+      "Blue": "https://ae-pic-a1.aliexpress-media.com/kf/S1cf750c0a3554bbdae157dd2c4d92e26C.jpg"
+    }
+  },
+  "ebayPrice": 11.05,
+  "sourceType": "aliexpress",
+  "aliexpressUrl": "https://www.aliexpress.com/item/1005009953521226.html",
+  "ebayTitle": "Warm Fleece Dog Coat Hooded Waterproof Winter Pet Puppy Clothes Small Medium Dogs"
+}

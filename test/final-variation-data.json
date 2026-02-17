@@ -1,0 +1,110 @@
+{
+  "count": 15,
+  "rows": [
+    {
+      "sz": "XS",
+      "cl": "Red",
+      "price": "8.45",
+      "qty": "1",
+      "stock": 5
+    },
+    {
+      "sz": "XS",
+      "cl": "Black",
+      "price": "9.10",
+      "qty": "1",
+      "stock": 2
+    },
+    {
+      "sz": "XS",
+      "cl": "Blue",
+      "price": "8.84",
+      "qty": "1",
+      "stock": 3
+    },
+    {
+      "sz": "S",
+      "cl": "Red",
+      "price": "9.36",
+      "qty": "1",
+      "stock": 3
+    },
+    {
+      "sz": "S",
+      "cl": "Black",
+      "price": "10.14",
+      "qty": "1",
+      "stock": 0
+    },
+    {
+      "sz": "S",
+      "cl": "Blue",
+      "price": "9.75",
+      "qty": "1",
+      "stock": 5
+    },
+    {
+      "sz": "M",
+      "cl": "Red",
+      "price": "11.05",
+      "qty": "1",
+      "stock": 10
+    },
+    {
+      "sz": "M",
+      "cl": "Black",
+      "price": "11.70",
+      "qty": "1",
+      "stock": 8
+    },
+    {
+      "sz": "M",
+      "cl": "Blue",
+      "price": "11.44",
+      "qty": "1",
+      "stock": 7
+    },
+    {
+      "sz": "L",
+      "cl": "Red",
+      "price": "13.00",
+      "qty": "1",
+      "stock": 0
+    },
+    {
+      "sz": "L",
+      "cl": "Black",
+      "price": "14.30",
+      "qty": "1",
+      "stock": 4
+    },
+    {
+      "sz": "L",
+      "cl": "Blue",
+      "price": "13.65",
+      "qty": "1",
+      "stock": 0
+    },
+    {
+      "sz": "XL",
+      "cl": "Red",
+      "price": "16.25",
+      "qty": "1",
+      "stock": 0
+    },
+    {
+      "sz": "XL",
+      "cl": "Black",
+      "price": "17.55",
+      "qty": "1",
+      "stock": 1
+    },
+    {
+      "sz": "XL",
+      "cl": "Blue",
+      "price": "16.90",
+      "qty": "1",
+      "stock": 2
+    }
+  ]
+}

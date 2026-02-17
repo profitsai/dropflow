@@ -1,0 +1,19 @@
+/* DropFlow - eBay page injected styles */
+/* Minimal styles - just visual indicators when form is being filled */
+
+.dropflow-filled {
+  outline: 2px solid #4caf50 !important;
+  outline-offset: 2px;
+  transition: outline-color 0.3s ease;
+}
+
+.dropflow-filling {
+  outline: 2px solid #3a86ff !important;
+  outline-offset: 2px;
+  animation: dropflow-pulse 1s infinite;
+}
+
+@keyframes dropflow-pulse {
+  0%, 100% { outline-color: #3a86ff; }
+  50% { outline-color: transparent; }
+}

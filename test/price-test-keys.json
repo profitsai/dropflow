@@ -1,0 +1,19 @@
+{
+  "allKeys": [
+    "_amazonData",
+    "_swLogs",
+    "accessToken",
+    "backendUrl",
+    "defaultListingType",
+    "defaultThreadCount",
+    "dropflow_price_markup",
+    "priceMarkup",
+    "refreshToken",
+    "userEmail",
+    "userId"
+  ],
+  "productKeys": [],
+  "bulkKeys": [],
+  "markup": 30,
+  "sampleValues": []
+}

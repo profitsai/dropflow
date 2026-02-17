@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DropFlow - ChatGPT Test</title>
+  <link rel="stylesheet" href="chatgpt-test.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>ChatGPT Test Mode</h1>
+      <p class="subtitle">Test and debug AI prompts and responses</p>
+    </header>
+
+    <!-- Chat Interface -->
+    <section class="card">
+      <h2>Send Message</h2>
+      <div class="input-row">
+        <textarea id="prompt-input" rows="3" placeholder="Type your message to ChatGPT..."></textarea>
+        <div class="input-controls">
+          <select id="model-select">
+            <option value="gpt-4o-mini">GPT-4o Mini</option>
+            <option value="gpt-4o">GPT-4o</option>
+            <option value="gpt-4-turbo">GPT-4 Turbo</option>
+          </select>
+          <button id="btn-send" class="btn btn-primary">Send</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Chat History -->
+    <section class="card">
+      <div class="history-header">
+        <h2>Chat History</h2>
+        <button id="btn-clear" class="btn btn-sm btn-secondary">Clear Log</button>
+      </div>
+      <div id="chat-history" class="chat-history">
+        <p class="placeholder-text">Messages will appear here...</p>
+      </div>
+    </section>
+
+    <!-- Stats -->
+    <section class="card">
+      <h2>Stats</h2>
+      <div class="stats">
+        <div class="stat-item">
+          <span class="stat-label">Messages Sent:</span>
+          <span id="stat-sent">0</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Last Response Time:</span>
+          <span id="stat-time">-</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Total Tokens:</span>
+          <span id="stat-tokens">0</span>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="chatgpt-test.js" type="module"></script>
+</body>
+</html>

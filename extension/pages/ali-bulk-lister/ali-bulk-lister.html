@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DropFlow - AliExpress Bulk Lister</title>
+  <link rel="stylesheet" href="ali-bulk-lister.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>AliExpress Bulk Lister</h1>
+      <p class="subtitle">List AliExpress products on eBay in bulk</p>
+    </header>
+
+    <!-- Input Section -->
+    <section class="card">
+      <h2>AliExpress Links</h2>
+      <textarea id="links-input" placeholder="Paste AliExpress product URLs here (one per line)..." rows="8"></textarea>
+      <div class="link-count">
+        <span id="link-count">0</span> links detected
+      </div>
+    </section>
+
+    <!-- Settings Section -->
+    <section class="card">
+      <h2>Listing Settings</h2>
+
+      <div class="settings-grid">
+        <div class="form-group">
+          <label for="listing-type">Listing Type</label>
+          <select id="listing-type">
+            <option value="standard">Standard</option>
+            <option value="opti-list">Opti-List (AI optimized)</option>
+            <option value="chat-list">Chat-List (ChatGPT)</option>
+            <option value="seo-list">SEO-List</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="thread-count">Threads</label>
+          <input type="number" id="thread-count" min="1" max="10" value="3">
+        </div>
+
+        <div class="form-group">
+          <label for="min-price">Min Price ($)</label>
+          <input type="number" id="min-price" min="0" step="0.01" placeholder="0">
+        </div>
+
+        <div class="form-group">
+          <label for="max-price">Max Price ($)</label>
+          <input type="number" id="max-price" min="0" step="0.01" placeholder="No limit">
+        </div>
+      </div>
+
+      <div class="settings-grid">
+        <div class="form-group">
+          <label for="ebay-marketplace">eBay Marketplace</label>
+          <select id="ebay-marketplace">
+            <option value="www.ebay.com">ebay.com (US)</option>
+            <option value="www.ebay.co.uk">ebay.co.uk (UK)</option>
+            <option value="www.ebay.ca">ebay.ca (Canada)</option>
+            <option value="www.ebay.com.au">ebay.com.au (Australia)</option>
+            <option value="www.ebay.de">ebay.de (Germany)</option>
+            <option value="www.ebay.fr">ebay.fr (France)</option>
+            <option value="www.ebay.it">ebay.it (Italy)</option>
+            <option value="www.ebay.es">ebay.es (Spain)</option>
+            <option value="www.ebay.nl">ebay.nl (Netherlands)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="checkbox-group">
+        <label class="checkbox-label">
+          <input type="checkbox" id="auto-close-errors">
+          <span>Close errored tabs automatically</span>
+        </label>
+      </div>
+
+      <div class="form-group">
+        <label for="max-success">Max Successful Listings (0 = unlimited)</label>
+        <input type="number" id="max-success" min="0" value="0">
+      </div>
+    </section>
+
+    <!-- Controls -->
+    <section class="controls">
+      <button id="btn-start" class="btn btn-primary">Start Listing</button>
+      <button id="btn-pause" class="btn btn-warning" disabled>Pause</button>
+      <button id="btn-resume" class="btn btn-success" disabled>Resume</button>
+      <button id="btn-terminate" class="btn btn-danger" disabled>Terminate</button>
+      <button id="btn-clear" class="btn btn-secondary">Clear</button>
+    </section>
+
+    <!-- Progress Section -->
+    <section class="card" id="progress-section" style="display: none;">
+      <h2>Progress</h2>
+      <div class="progress-bar-container">
+        <div class="progress-bar" id="progress-bar" style="width: 0%;">0%</div>
+      </div>
+      <div class="progress-stats">
+        <span class="stat">
+          Position: <strong id="stat-position">0</strong> / <strong id="stat-total">0</strong>
+        </span>
+        <span class="stat stat-success">
+          Success: <strong id="stat-success">0</strong>
+        </span>
+        <span class="stat stat-fail">
+          Failed: <strong id="stat-fail">0</strong>
+        </span>
+      </div>
+    </section>
+
+    <!-- Results Table -->
+    <section class="card" id="results-section" style="display: none;">
+      <h2>Results</h2>
+      <button id="btn-open-table" class="btn btn-secondary btn-sm">Open Full Table</button>
+      <div class="results-table-container">
+        <table class="results-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Link</th>
+              <th>Status</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody id="results-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script src="ali-bulk-lister.js" type="module"></script>
+</body>
+</html>

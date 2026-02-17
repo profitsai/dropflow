@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DropFlow - Competitor Research</title>
+  <link rel="stylesheet" href="competitor.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Competitor Research</h1>
+      <p class="subtitle">Scan competitor eBay sellers and their sold items</p>
+    </header>
+
+    <!-- Input -->
+    <section class="card">
+      <h2>Competitors</h2>
+      <textarea id="usernames-input" rows="6" placeholder="Enter eBay seller usernames (one per line)..."></textarea>
+      <div class="input-info">
+        <span><strong id="username-count">0</strong> competitors</span>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section class="card">
+      <h2>Scan Settings</h2>
+      <div class="settings-grid">
+        <div class="form-group">
+          <label for="filter-days">Time Period</label>
+          <select id="filter-days">
+            <option value="1">Last 1 day</option>
+            <option value="7">Last 7 days</option>
+            <option value="14">Last 14 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="60">Last 60 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="concurrency">Scanning Speed</label>
+          <select id="concurrency">
+            <option value="1">Slow (1 at a time)</option>
+            <option value="3" selected>Medium (3 concurrent)</option>
+            <option value="5">Fast (5 concurrent)</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <!-- Controls -->
+    <section class="controls">
+      <button id="btn-run" class="btn btn-primary">Run Scanner</button>
+      <button id="btn-stop" class="btn btn-danger" disabled>Stop</button>
+      <button id="btn-reset" class="btn btn-secondary">Reset</button>
+    </section>
+
+    <!-- Progress -->
+    <section class="card" id="progress-card" style="display: none;">
+      <h2>Scan Progress</h2>
+      <div class="scan-info">
+        <div class="info-row">
+          <span class="info-label">Position:</span>
+          <span id="scan-position">0</span> / <span id="scan-total">0</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Currently scanning:</span>
+          <span id="scan-current">-</span>
+        </div>
+      </div>
+      <div class="progress-bar-container">
+        <div class="progress-bar" id="progress-bar" style="width: 0%;">0%</div>
+      </div>
+    </section>
+
+    <!-- Results Summary -->
+    <section class="card" id="results-card" style="display: none;">
+      <h2>Results</h2>
+      <div id="results-output"></div>
+    </section>
+  </div>
+
+  <script src="competitor.js" type="module"></script>
+</body>
+</html>

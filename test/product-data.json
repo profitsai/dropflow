@@ -1,0 +1,40 @@
+{
+  "title": "Warm Fleece Dog Coat With Hooded Waterproof Winter Pet Puppy Clothes For Small Medium Dogs Cats French Bulldog Hoodie Costume",
+  "price": 8.12,
+  "originalPrice": 16.93,
+  "currency": "AUD",
+  "images": [
+    "https://ae-pic-a1.aliexpress-media.com/kf/S1cf750c0a3554bbdae157dd2c4d92e26C.jpg",
+    "https://ae-pic-a1.aliexpress-media.com/kf/Sc5bfa0e7793d4562a3ffe0bbe3a661166.jpg",
+    "https://ae-pic-a1.aliexpress-media.com/kf/Sf7831f8ffa854eccbd953391af468128t.jpg",
+    "https://ae-pic-a1.aliexpress-media.com/kf/Sfcb676f3b6ab4f6baf6d5e5e013627ddz.jpg",
+    "https://ae-pic-a1.aliexpress-media.com/kf/S84f2d74dd2a742f4904f212aa53aad77H.jpg",
+    "https://ae-pic-a1.aliexpress-media.com/kf/Se33197e157b04d5485f24224fa4601e8H.jpg"
+  ],
+  "variations": {
+    "hasVariations": true,
+    "axes": [
+      {
+        "name": "Color",
+        "values": [
+          {"name": "Red", "image": "https://ae-pic-a1.aliexpress-media.com/kf/S15d6dab586f2486c8ee5d20704582899a.jpg", "soldOut": false},
+          {"name": "Black", "image": "https://ae-pic-a1.aliexpress-media.com/kf/Sdd42651e632041e797aa7d5531dd9f091.jpg", "soldOut": true},
+          {"name": "Coffee", "image": "https://ae-pic-a1.aliexpress-media.com/kf/Sb89fb2276757499bb4efd5f33b297367c.jpg", "soldOut": true}
+        ]
+      },
+      {
+        "name": "Size",
+        "values": [
+          {"name": "XS", "soldOut": false},
+          {"name": "S", "soldOut": false},
+          {"name": "M", "soldOut": false},
+          {"name": "L", "soldOut": true},
+          {"name": "XL", "soldOut": true}
+        ]
+      }
+    ]
+  },
+  "aliexpressUrl": "https://www.aliexpress.com/item/1005009953521226.html",
+  "ebayPrice": 24.99,
+  "ebayTitle": "Warm Fleece Dog Coat Hooded Waterproof Winter Pet Puppy Clothes Small Medium Dogs"
+}
