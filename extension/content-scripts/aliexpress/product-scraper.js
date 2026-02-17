@@ -218,8 +218,14 @@
       }))
     }));
 
-    // No axes or only 1 SKU = no real variations
-    if (axes.length === 0 || priceList.length <= 1) {
+    // No axes = no variation structure at all
+    if (axes.length === 0) {
+      // Still extract single-SKU price if available
+      if (priceList.length === 1) {
+        const singlePrice = parseFloat(priceList[0].sku_price || priceList[0].sku_bulk_order_price || 0);
+        const singleStock = parseInt(priceList[0].sku_stock || 0);
+        return { hasVariations: false, axes: [], skus: [], imagesByValue: {}, singleSkuPrice: singlePrice, singleSkuStock: singleStock };
+      }
       return { hasVariations: false, axes: [], skus: [], imagesByValue: {} };
     }
 
@@ -351,6 +357,26 @@
       }
     }
 
+    // Shipping info — extract from API response if available
+    const shippingInfo = root.ae_item_delivery_info_dto || data?.ae_item_delivery_info_dto || {};
+    const freightList = shippingInfo.freight_list || [];
+    let shippingCost = null;
+    let shippingMethod = '';
+    let estimatedDelivery = '';
+    if (freightList.length > 0) {
+      // Pick cheapest shipping option
+      const sorted = [...freightList].sort((a, b) => parseFloat(a.freight_amount || 999) - parseFloat(b.freight_amount || 999));
+      const best = sorted[0];
+      shippingCost = parseFloat(best.freight_amount || 0);
+      shippingMethod = best.company || best.service_name || '';
+      estimatedDelivery = best.delivery_time || best.estimated_delivery_time || '';
+    }
+
+    // Stock / availability from API
+    const totalStock = variations.skus.length > 0
+      ? variations.skus.reduce((sum, s) => sum + (s.stock || 0), 0)
+      : (variations.singleSkuStock || parseInt(priceList[0]?.sku_stock || 0) || null);
+
     // Store info
     const storeName = baseInfo.store_name || root.store_name || '';
 
@@ -366,14 +392,20 @@
       description: descriptionText,
       bulletPoints: bulletPoints,
       brand: brand,               // Extracted from ae_item_property_list
-      availability: { inStock: true, quantity: null, text: 'AliExpress' },
+      availability: { inStock: totalStock !== 0, quantity: totalStock, text: 'AliExpress' },
       seller: storeName,
       isFBA: false,               // Not applicable for AliExpress
       category: '',
       rating: null,
       reviewCount: 0,
       url: window.location.href,
-      variations: variations       // Full variation data (axes, skus, imagesByValue)
+      variations: variations,       // Full variation data (axes, skus, imagesByValue)
+      shipping: {
+        cost: shippingCost,
+        method: shippingMethod,
+        estimatedDelivery: estimatedDelivery,
+        isFree: shippingCost === 0
+      }
     };
   }
 
@@ -783,8 +815,14 @@
 
     const priceByValue = new Map();
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const maxClickTime = 30000; // 30s max for all clicks
+    const clickStart = Date.now();
 
     for (const val of priceAxis.values) {
+      if (Date.now() - clickStart > maxClickTime) {
+        console.warn(`[DropFlow Ali] enrichSkuPricesViaClicks: timeout after ${priceByValue.size} values`);
+        break;
+      }
       const btn = btnMap.get(val.name.toLowerCase());
       if (!btn) continue;
 
@@ -1093,7 +1131,19 @@
         const text = el.textContent.trim();
         const match = text.match(/[\d]+[.,]?\d*/);
         if (match) {
-          const price = parseFloat(match[0].replace(/,/g, ''));
+          let raw = match[0];
+          // Handle European comma-decimal (e.g., "4,99") vs thousand separator (e.g., "1,234")
+          if (raw.includes(',') && !raw.includes('.')) {
+            const afterComma = raw.split(',')[1];
+            if (afterComma && afterComma.length <= 2) {
+              raw = raw.replace(',', '.'); // European decimal
+            } else {
+              raw = raw.replace(/,/g, ''); // Thousand separator
+            }
+          } else {
+            raw = raw.replace(/,/g, '');
+          }
+          const price = parseFloat(raw);
           if (price > 0) return price;
         }
       }
@@ -1114,6 +1164,44 @@
       }
     }
     return 0;
+  }
+
+  function getShippingFromDom() {
+    const result = { cost: null, method: '', estimatedDelivery: '', isFree: false };
+    // Look for shipping/delivery info in the DOM
+    const shippingSelectors = [
+      '[data-pl="product-shipping"]',
+      '[class*="shipping"]',
+      '[class*="delivery"]',
+      '[class*="freight"]',
+      '[class*="Shipping"]',
+      '[class*="Delivery"]'
+    ];
+    for (const sel of shippingSelectors) {
+      const el = document.querySelector(sel);
+      if (!el) continue;
+      const text = el.textContent.trim();
+      if (!text || text.length > 500) continue;
+      // Check for free shipping
+      if (/free\s*shipp/i.test(text)) {
+        result.cost = 0;
+        result.isFree = true;
+      }
+      // Extract shipping cost
+      const costMatch = text.match(/(?:shipping|delivery)[^$€£]*[$€£]\s*([\d.]+)/i) ||
+                         text.match(/[$€£]\s*([\d.]+)\s*(?:shipping|delivery)/i);
+      if (costMatch) {
+        result.cost = parseFloat(costMatch[1]);
+        result.isFree = result.cost === 0;
+      }
+      // Extract estimated delivery time
+      const dayMatch = text.match(/(\d+)\s*[-–]\s*(\d+)\s*(?:days?|business\s*days?)/i);
+      if (dayMatch) {
+        result.estimatedDelivery = `${dayMatch[1]}-${dayMatch[2]} days`;
+      }
+      if (result.cost !== null || result.estimatedDelivery) break;
+    }
+    return result;
   }
 
   function getBulletPointsFromDom() {
@@ -1175,6 +1263,9 @@
       }
     }
 
+    // Shipping from DOM
+    const shipping = getShippingFromDom();
+
     return {
       asin: productId,
       title: title,
@@ -1191,7 +1282,8 @@
       rating: null,
       reviewCount: 0,
       url: window.location.href,
-      variations: null              // No variation data from DOM fallback
+      variations: null,              // No variation data from DOM fallback
+      shipping: shipping
     };
   }
 
@@ -1315,7 +1407,8 @@
           rating: null,
           reviewCount: 0,
           url: window.location.href,
-          variations: scriptData.variations || null
+          variations: scriptData.variations || null,
+          shipping: getShippingFromDom()
         };
         console.log(`[DropFlow Ali] Script-only scrape: "$${data.price}", ${data.images.length} images, variations=${!!scriptData.variations?.hasVariations}`);
       } else {
@@ -1343,6 +1436,15 @@
       const minSkuPrice = Math.min(...scriptData.variations.skus.map(s => s.price).filter(p => p > 0));
       if (minSkuPrice > 0) {
         data.price = minSkuPrice;
+      }
+    }
+
+    // Supplement shipping from DOM if API didn't provide it
+    if (!data.shipping || data.shipping.cost === null) {
+      const domShipping = getShippingFromDom();
+      if (domShipping.cost !== null || domShipping.estimatedDelivery) {
+        data.shipping = domShipping;
+        console.log(`[DropFlow Ali] Shipping supplemented from DOM: cost=$${domShipping.cost}, free=${domShipping.isFree}`);
       }
     }
 
@@ -1378,7 +1480,7 @@
           return u;
         }
 
-        // No size suffix at all — append _640x640.jpg
+        // No size suffix at all — append _640x640.jpg (AliExpress CDN convention: file.jpg_640x640.jpg)
         if (/\.\w{3,4}$/.test(u)) {
           return u + '_640x640.jpg';
         }
