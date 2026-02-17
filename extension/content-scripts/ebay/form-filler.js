@@ -1202,9 +1202,15 @@
       if (match) return match;
     }
 
-    // Partial match â€" axis name contained in label or vice versa
+    // Blacklist: eBay labels that should never be matched as variation axes.
+    // "Features" is a predefined attribute on some categories (e.g., dog collars)
+    // that only accepts a small set of values — not suitable for color/size axes.
+    const blacklistedLabels = new Set(['features', 'department', 'occasion', 'season', 'theme']);
+
+    // Partial match — axis name contained in label or vice versa
     const partial = specificLabels.find(l => {
       const ll = l.toLowerCase().trim();
+      if (blacklistedLabels.has(ll)) return false;
       return (ll.includes(lower) || lower.includes(ll)) && Math.abs(ll.length - lower.length) < 10;
     });
     if (partial) return partial;
@@ -6220,7 +6226,7 @@
               const resp = await sendMessageSafe({
                 type: 'UPLOAD_EBAY_IMAGE', imageDataUrl: dataUrl,
                 filename: `variation-${val.name.replace(/\s+/g, '-')}.jpg`
-              });
+              }, 20000);
               if (resp?.success && resp.imageUrl) uploadedUrl = resp.imageUrl;
             } catch (_) {}
           }
