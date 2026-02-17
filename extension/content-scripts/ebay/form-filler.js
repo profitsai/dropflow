@@ -1707,7 +1707,8 @@
         // Wait for the iframe's form-filler to complete the builder flow.
         // It will store results or close the dialog when done.
         // Poll for up to 120s checking if variations got populated or dialog closed.
-        for (let wait = 0; wait < 240; wait++) {
+        const MSKU_DIALOG_WAIT_MAX = 30; // Cap at 30 iterations (~15s) to prevent infinite loops
+        for (let wait = 0; wait < MSKU_DIALOG_WAIT_MAX; wait++) {
           await sleep(500);
           
           // Check if the MSKU dialog closed (builder flow completed)
@@ -1754,6 +1755,7 @@
             console.log(`[DropFlow] Waiting for MSKU iframe builder flow... ${wait * 500}ms`);
           }
         }
+        if (MSKU_DIALOG_WAIT_MAX <= 30) console.warn(`[DropFlow] MSKU dialog wait loop capped at ${MSKU_DIALOG_WAIT_MAX} iterations — falling through`);
         
         // Check one final time
         if (checkVariationsPopulated()) {
@@ -1884,7 +1886,8 @@
         // MSKU dialog already open — delegate to iframe
         await logVariationStep('fillVariations:builderDetectedBeforeEnable:mskuDialog', { url: window.location.href });
         try { await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000); } catch (_) {}
-        for (let mw = 0; mw < 240; mw++) {
+        const PRE_ENABLE_MSKU_MAX = 30; // Cap at 30 iterations (~15s)
+        for (let mw = 0; mw < PRE_ENABLE_MSKU_MAX; mw++) {
           await sleep(500);
           if (!document.querySelector('.msku-dialog') && checkVariationsPopulated()) {
             const filledAxes = axisMapping.map(m => m.ebayLabel);
@@ -1894,6 +1897,7 @@
             try { await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000); } catch (_) {}
           }
         }
+        console.warn(`[DropFlow] Pre-enable MSKU dialog wait capped at ${PRE_ENABLE_MSKU_MAX} iterations — falling through`);
         return false;
       }
       await logVariationStep('fillVariations:builderDetectedBeforeEnable', { url: window.location.href });
@@ -2061,11 +2065,11 @@
     await logVariationStep('fillVariations:clickedEdit', { text: editBtn.textContent?.trim()?.substring(0, 40) });
 
     // Dedicated flow: some eBay forms open a full-page "Create your variations" screen.
-    // Transition can be slow; wait longer and retry clicking Edit a few times.
-    // Extended to 300 iterations (90s) because the builder iframe runs as a separate
-    // content script and takes ~50s to complete. We rely on checkVariationsPopulated()
-    // to detect when the builder saves and the parent form shows variation data.
-    for (let navWait = 0; navWait < 300; navWait++) {
+    // Capped at 30 iterations (~9s) to prevent infinite loops. If the builder hasn't
+    // completed by then, we break out and fall through to putVariationPricesViaDraftAPI().
+    const BUILDER_LOOP_MAX = 30;
+    let builderLoopExhausted = false;
+    for (let navWait = 0; navWait < BUILDER_LOOP_MAX; navWait++) {
       await sleep(300);
       const navCtx = (navWait % 10 === 0)
         ? detectVariationBuilderContextWithLog(`fillVariations:postEditClick:${navWait}`)
@@ -2215,21 +2219,13 @@
         }
       }
 
-      // Only retry Edit after builder would have had time to complete (>200 iterations = 60s)
-      if (navWait === 220 || navWait === 250 || navWait === 280) {
-        // Only retry Edit if variations aren't already populated
-        if (checkVariationsPopulated()) {
-          console.warn('[DropFlow] Variations already populated, skipping retryEditClick');
-          const filledAxes = axisMapping.map(m => m.ebayLabel);
-          return { filledAxes, axisNameMap };
-        }
-        const retryEdit = findVariationEditButton();
-        if (retryEdit) {
-          simulateClick(retryEdit);
-          await logVariationStep('fillVariations:retryEditClick', { attempt: navWait });
-        }
-      }
     }
+    // If loop exhausted without returning, log warning and fall through
+    if (!builderLoopExhausted) {
+      builderLoopExhausted = true;
+    }
+    console.warn(`[DropFlow] Builder loop exhausted after ${BUILDER_LOOP_MAX} iterations — falling through to draft API`);
+    await logVariationStep('fillVariations:builderLoopExhausted', { maxIter: BUILDER_LOOP_MAX });
 
     // =====================================================
     // MSKU iframe wait: the bulkedit iframe may exist now but still loading.
@@ -2248,7 +2244,8 @@
         console.warn(`[DropFlow] MSKU iframe found after postEditClick loop: ${mskuIframe.src?.substring(0, 120)}`);
         await logVariationStep('fillVariations:mskuIframeWait', { src: mskuIframe.src?.substring(0, 200) });
         let iframeDoc = null;
-        for (let poll = 0; poll < 60; poll++) {
+        const IFRAME_POLL_MAX = 30; // Cap at 30 iterations (~15s)
+        for (let poll = 0; poll < IFRAME_POLL_MAX; poll++) {
           try {
             const fdoc = mskuIframe.contentDocument;
             if (fdoc?.body) {
@@ -2290,7 +2287,8 @@
 
           // Handoff fallback: wait for subframe automation to finish and return
           // control to the form with populated variations.
-          for (let wait = 0; wait < 120; wait++) {
+          const HANDOFF_WAIT_MAX = 30; // Cap at 30 iterations (~15s)
+          for (let wait = 0; wait < HANDOFF_WAIT_MAX; wait++) {
             await sleep(500);
             if (checkVariationsPopulated()) {
               await logVariationStep('fillVariations:mskuHandoffPopulated', { wait });
@@ -2298,7 +2296,7 @@
               return { filledAxes, axisNameMap };
             }
           }
-          console.warn('[DropFlow] MSKU handoff did not complete within 60s');
+          console.warn(`[DropFlow] MSKU handoff wait capped at ${HANDOFF_WAIT_MAX} iterations — falling through`);
           await logVariationStep('fillVariations:mskuHandoffTimeout', {});
         }
       }
@@ -2349,7 +2347,8 @@
       return null;
     };
 
-    for (let attempt = 0; attempt < 35; attempt++) {
+    const EDITOR_DETECT_MAX = 30; // Cap at 30 iterations (~13.5s)
+    for (let attempt = 0; attempt < EDITOR_DETECT_MAX; attempt++) {
       await sleep(450);
       const lateCtx = (attempt % 10 === 0)
         ? detectVariationBuilderContextWithLog(`fillVariations:editorDetectLoop:${attempt}`)
@@ -2408,13 +2407,15 @@
         if (noEditorCtx.isMskuDialog && IS_TOP_FRAME) {
           try { await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000); } catch (_) {}
           // Wait a bit for iframe builder to complete
-          for (let mw = 0; mw < 120; mw++) {
+          const NO_EDITOR_MSKU_MAX = 30; // Cap at 30 iterations (~30s)
+          for (let mw = 0; mw < NO_EDITOR_MSKU_MAX; mw++) {
             await sleep(1000);
             if (!document.querySelector('.msku-dialog') && checkVariationsPopulated()) {
               const filledAxes = axisMapping.map(m => m.ebayLabel);
               return { filledAxes, axisNameMap };
             }
           }
+          console.warn(`[DropFlow] No-editor MSKU wait capped at ${NO_EDITOR_MSKU_MAX} iterations — falling through`);
         } else {
           await logVariationStep('fillVariations:variationBuilderDetectedNoEditor', { url: window.location.href });
           const ok = await runVariationBuilderPageFlow(productData, axisMapping, noEditorCtx.doc);
@@ -3369,9 +3370,16 @@
       const existing = lockData[storageKey];
       const lockAge = existing ? (Date.now() - existing.ts) : null;
       if (existing && lockAge < lockTtlMs) {
-        console.warn(`[DropFlow] Builder cross-context lock held (scope=${lockScope}, host=${existing.host}, age=${lockAge}ms); skipping`);
-        await logVariationStep('variationBuilder:crossContextLock', { scope: lockScope, host: existing.host, ageMs: lockAge });
-        return false;
+        // Force-release stale locks older than 60 seconds
+        if (lockAge > 60000) {
+          console.warn(`[DropFlow] Builder cross-context lock stale (age=${lockAge}ms > 60s) — force-releasing`);
+          await logVariationStep('variationBuilder:crossContextLockForceRelease', { scope: lockScope, host: existing.host, ageMs: lockAge });
+          try { await chrome.storage.local.remove(storageKey); } catch (_) {}
+        } else {
+          console.warn(`[DropFlow] Builder cross-context lock held (scope=${lockScope}, host=${existing.host}, age=${lockAge}ms); skipping`);
+          await logVariationStep('variationBuilder:crossContextLock', { scope: lockScope, host: existing.host, ageMs: lockAge });
+          return false;
+        }
       }
       await chrome.storage.local.set({ [storageKey]: { ts: Date.now(), host: window.location.hostname } });
     } catch (_) {}
@@ -4271,11 +4279,15 @@
 
     const clearSelectedOptionsForActiveAttribute = async () => {
       let cleared = 0;
-      const opts = readVisibleOptions();
-      for (const opt of opts) {
-        if (!opt.selected) continue;
-        // Use native .click() to avoid double-toggle
-        (asClickableTarget(opt.el)).click();
+      // Re-read options each iteration because React re-renders after each click
+      // can detach previously-read element references from the live DOM.
+      let maxPasses = 50; // safety limit
+      while (maxPasses-- > 0) {
+        builderRoot = findBuilderRoot();
+        const opts = readVisibleOptions();
+        const selected = opts.find(o => o.selected);
+        if (!selected) break;
+        (asClickableTarget(selected.el)).click();
         await sleep(150);
         cleared++;
       }
@@ -4314,6 +4326,10 @@
       const cleanedValue = String(value || '').replace(/\s*\([^)]*\)\s*/g, '').trim();
       const targetNorm = norm(cleanedValue || value);
       if (!targetNorm) return false;
+
+      // Refresh builderRoot before each option — React re-renders after previous
+      // option clicks can detach the old root from the live DOM tree.
+      builderRoot = findBuilderRoot();
 
       const findMatch = () => {
         const options = readVisibleOptions();
@@ -4641,6 +4657,9 @@
 
       const cleared = await clearSelectedOptionsForActiveAttribute();
       if (cleared > 0) {
+        // React re-renders after deselecting options can detach builderRoot from the DOM.
+        // Refresh it so subsequent queries don't search a stale/detached tree.
+        builderRoot = findBuilderRoot();
         await logVariationStep('variationBuilder:clearedPresetOptions', {
           axis: mapped.spec.axis.name,
           cleared
@@ -10295,7 +10314,8 @@
             // Inject form-filler into MSKU iframe
             try { await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000); } catch (_) {}
             // Wait for iframe to complete (dialog closes or variations populate)
-            for (let mw = 0; mw < 240; mw++) {
+            const CHECK_PENDING_MSKU_MAX = 30; // Cap at 30 iterations (~15s)
+            for (let mw = 0; mw < CHECK_PENDING_MSKU_MAX; mw++) {
               await sleep(500);
               const dialogOpen = !!document.querySelector('.msku-dialog, [class*="msku-dialog"]');
               if (!dialogOpen) {
