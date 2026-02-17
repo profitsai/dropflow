@@ -3012,9 +3012,17 @@
       await chrome.storage.local.set({ [storageKey]: { ts: Date.now(), host: window.location.hostname } });
     } catch (_) {}
     // Auto-clear lock shortly after TTL expires.
-    setTimeout(async () => {
+    const autoLockTimer = setTimeout(async () => {
       try { await chrome.storage.local.remove(storageKey); } catch (_) {}
     }, lockTtlMs + 10000);
+
+    // Helper to release the cross-context lock
+    const releaseCrossContextLock = async () => {
+      try { clearTimeout(autoLockTimer); } catch (_) {}
+      try { await chrome.storage.local.remove(storageKey); } catch (_) {}
+    };
+
+    try { // <<< try/finally to guarantee lock release
 
     console.warn('[DropFlow] Variation builder flow starting');
 
@@ -4356,12 +4364,19 @@
         console.warn('[DropFlow] No Save and close found after Continue; builder may have already closed');
       }
       
+      // Signal completion and release lock before returning
+      await releaseCrossContextLock();
+      try { await chrome.storage.local.set({ dropflow_builder_complete: { ts: Date.now(), draftId: window.location.href } }); } catch (_) {}
       return true;
     }
 
     await logVariationStep('variationBuilder:noContinue', { selectedAxes, selectedValues });
     console.warn('[DropFlow] Variation builder could not find an enabled Continue button');
     return false;
+
+    } finally { // <<< guarantee lock release on ALL exit paths
+      await releaseCrossContextLock();
+    }
   }
 
   /**
@@ -9561,6 +9576,13 @@
         const subframePath = String(window.location.pathname || '');
         const subframeHost = String(window.location.hostname || '');
         const subframeHref = String(window.location.href || '');
+
+        // Exclude eBay tracker/fingerprint iframes — they are never builder frames
+        if (/devicebind\.ebay\./i.test(subframeHost)) {
+          console.log(`[DropFlow] Subframe skipped (devicebind tracker): host=${subframeHost}`);
+          return;
+        }
+
         // Only trust URL-based signals - DOM heuristics (initialBuilderCtx.isBuilder)
         // produce false positives in non-builder iframes like /lstng/picupload (photo editor).
         // The variation builder ALWAYS lives on bulkedit.ebay.* subdomains.
