@@ -322,6 +322,7 @@
    * Fill the eBay listing form with product data.
    */
   async function fillForm(productData) {
+    console.log('[DropFlow] fillForm() ENTERED — url=' + window.location.href.substring(0, 80) + ' hasVariations=' + !!productData?.variations?.hasVariations);
     const results = {
       title: false,
       price: false,
@@ -345,7 +346,26 @@
     lockHost[fillLockKey] = { startedAt: now };
 
     try {
-      // 0. Wait for form to render, then scroll to trigger lazy-loading
+      // 0. Dismiss any auto-opened condition modal first
+      {
+        const doneBtn = [...document.querySelectorAll('button, [role="button"]')].find(
+          el => /^done$/i.test(el.textContent.trim()) && el.offsetParent !== null
+        );
+        if (doneBtn) {
+          simulateClick(doneBtn);
+          console.log('[DropFlow] fillForm: dismissed pre-existing condition modal');
+          await sleep(800);
+        }
+        // Also dismiss any tooltip overlay
+        const tooltipClose = document.querySelector('[class*="tooltip"] button[class*="close"], [class*="tip"] [class*="close"], [class*="coach"] button[class*="close"]');
+        if (tooltipClose) {
+          simulateClick(tooltipClose);
+          console.log('[DropFlow] fillForm: dismissed tooltip overlay');
+          await sleep(500);
+        }
+      }
+
+      // 0b. Wait for form to render, then scroll to trigger lazy-loading
       await waitForFormReady(15000);
       await scrollPageToLoadAll();
 
