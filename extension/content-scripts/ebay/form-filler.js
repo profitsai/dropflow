@@ -1360,6 +1360,25 @@
       return false;
     }
 
+    // --- Early exit: if the parent page already has a variations table with rows,
+    // skip the entire builder flow and let step 5c (fillVariationCombinationsTable)
+    // handle pricing. This avoids opening the MSKU builder when variations already exist.
+    if (IS_TOP_FRAME) {
+      const varSection = findVariationsSection();
+      if (varSection) {
+        const existingTable = varSection.querySelector('table');
+        if (existingTable && existingTable.querySelectorAll('tr').length >= 3) {
+          console.log('[DropFlow] fillVariations: variations table already exists on parent page ' +
+            `(${existingTable.querySelectorAll('tr').length} rows). Skipping builder — ` +
+            'step 5c will fill prices.');
+          await logVariationStep('fillVariations:existingTableDetected', {
+            rowCount: existingTable.querySelectorAll('tr').length,
+          });
+          return true; // Signal success so step 5c runs and fills prices
+        }
+      }
+    }
+
     // If we're already on the dedicated variation builder screen, use that flow directly.
     const builderCtxAtStart = detectVariationBuilderContextWithLog('fillVariations:start');
     if (builderCtxAtStart.isBuilder) {
