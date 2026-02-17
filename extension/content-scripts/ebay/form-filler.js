@@ -3046,7 +3046,10 @@
       const soft = new Set([n]);
       if (n === 'color' || n === 'colour') {
         ['color', 'colour', 'maincolor', 'maincolour', 'shade'].forEach(v => strict.add(norm(v)));
-        ['features', 'feature', 'style'].forEach(v => soft.add(norm(v)));
+        // NOTE: "features" deliberately excluded — eBay's "Features" attribute is a
+        // generic grab-bag that swallows color values (only a few match predefined
+        // options). Using a custom "Color" attribute is far more reliable.
+        ['style'].forEach(v => soft.add(norm(v)));
       } else if (n === 'size') {
         ['size', 'dogsize', 'petsize', 'garmentsize', 'apparelsize', 'ussize', 'uksize', 'eusize', 'ausize']
           .forEach(v => strict.add(norm(v)));
@@ -4066,7 +4069,8 @@
                    sourceChips.find(c => !usedNorms.has(c.norm) && matchesAlias(c.norm, spec, true)) ||
                    null;
         if (!chip && /color|colour/i.test(spec.axis.name)) {
-          chip = sourceChips.find(c => !usedNorms.has(c.norm) && /(feature|features|style|colour|color)/.test(c.norm)) || null;
+          // "features" excluded — it's a generic eBay attribute that doesn't carry colour semantics
+          chip = sourceChips.find(c => !usedNorms.has(c.norm) && /(style|colour|color)/.test(c.norm)) || null;
         }
         if (!chip) continue;
         usedNorms.add(chip.norm);
@@ -7694,7 +7698,7 @@
           const response = await sendMessageSafe({
             type: 'FETCH_IMAGE',
             url: normalizedUrls[i]
-          });
+          }, 15000);
           if (response && response.success && response.dataUrl) {
             dataUrl = response.dataUrl;
             console.log(`[DropFlow] Image ${i + 1}: fetched via service worker (${Math.round(dataUrl.length / 1024)}KB)`);
@@ -8324,7 +8328,7 @@
             type: 'UPLOAD_EBAY_IMAGE',
             imageDataUrl: dataUrl,
             filename: files[i].name
-          });
+          }, 20000);
           if (resp && resp.success && resp.imageUrl) {
             uploadedPictures.push(resp.imageUrl);
             console.log(`[DropFlow] Image ${i + 1} uploaded via SW proxy: ${resp.imageUrl.substring(0, 60)}`);
