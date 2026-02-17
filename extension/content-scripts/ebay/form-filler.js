@@ -1028,8 +1028,23 @@
       return productData.aiDescription;
     }
 
-    // Skip AI generation for now — use static template (AI call hangs in MV3)
-    console.log('[DropFlow] Using static description template (AI skipped)');
+    // Request AI description from service worker with timeout handling
+    try {
+      const result = await sendMessageSafe({
+        type: 'GENERATE_DESCRIPTION',
+        title: productData.title || '',
+        bulletPoints: (productData.bulletPoints || []).join('\n'),
+        description: productData.description || ''
+      }, 30000);
+      if (result && result.html) {
+        console.log('[DropFlow] AI description generated via service worker');
+        return result.html;
+      }
+    } catch (e) {
+      console.warn('[DropFlow] AI description generation failed:', e.message);
+    }
+    // Fallback to static template
+    console.log('[DropFlow] Using static description template (AI fallback)');
     return buildDescription(productData);
   }
 
