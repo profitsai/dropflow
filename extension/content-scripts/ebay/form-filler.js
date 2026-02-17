@@ -728,6 +728,23 @@
         }
       }
 
+      // 5c½. Draft API per-variant pricing — bypasses DOM/iframe entirely.
+      // This is the MOST RELIABLE approach since it avoids cross-origin iframe issues.
+      // Runs after the builder has created variation structure in the draft.
+      if (hasVariations && productData.variations?.skus?.length > 0 && ebayContext?.draftId) {
+        try {
+          const draftPriceResult = await putVariationPricesViaDraftAPI(productData, ebayContext);
+          if (draftPriceResult.success) {
+            results.variationPrices = true;
+            console.log(`[DropFlow] ✅ Draft API variation pricing: ${draftPriceResult.pricedCount} variants priced`);
+          } else {
+            console.warn('[DropFlow] Draft API variation pricing did not succeed — DOM prices may still apply');
+          }
+        } catch (err) {
+          console.error('[DropFlow] putVariationPricesViaDraftAPI error:', err);
+        }
+      }
+
       // 5d. Clear invalid UPC values from variations
       // The builder may have accidentally set UPC to "1" or another invalid value.
       // Attempt to clear it via the draft API by setting UPC to empty/Does not apply.
@@ -1171,6 +1188,244 @@
       console.warn('[DropFlow] Draft PUT error:', e.message);
       return false;
     }
+  }
+
+  /**
+   * Set per-variant prices via eBay's draft API (bypasses DOM/iframe entirely).
+   * 1. GET the current draft to discover the variation structure eBay stored.
+   * 2. Patch each SKU's price in the draft data.
+   * 3. PUT the updated draft back.
+   *
+   * @param {object} productData - product data with .variations.skus[]
+   * @param {object} ebayContext - { headers, draftId }
+   * @returns {{ success: boolean, pricedCount: number }}
+   */
+  async function putVariationPricesViaDraftAPI(productData, ebayContext) {
+    const result = { success: false, pricedCount: 0 };
+    if (!ebayContext?.draftId || !ebayContext?.headers) return result;
+
+    const variations = productData?.variations;
+    const skus = variations?.skus || [];
+    if (skus.length === 0) return result;
+
+    // 1. GET current draft to discover the variation/SKU structure
+    const draft = await getDraftData(ebayContext);
+    if (!draft) {
+      console.warn('[DropFlow] putVariationPricesViaDraftAPI: could not GET draft');
+      return result;
+    }
+
+    console.log('[DropFlow] Draft API variation pricing: draft keys =', Object.keys(draft).join(', '));
+
+    // Discover where eBay stores variation data — try multiple known shapes
+    // Shape A: draft.variations[] (array of variation objects)
+    // Shape B: draft.sku[] (array of SKU objects)
+    // Shape C: draft.variationDetails.variations[]
+    // Shape D: draft.variation[] with variationSpecifics + price
+    const variationPaths = [
+      draft.variations,
+      draft.sku,
+      draft.variationDetails?.variations,
+      draft.variation,
+      draft.SKU,
+      draft.skus,
+    ].filter(v => Array.isArray(v) && v.length > 0);
+
+    // Log full draft structure keys for debugging (top 2 levels)
+    const draftStructure = {};
+    for (const [k, v] of Object.entries(draft)) {
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        draftStructure[k] = Object.keys(v);
+      } else if (Array.isArray(v)) {
+        draftStructure[k] = `Array(${v.length})` + (v.length > 0 ? ': ' + JSON.stringify(Object.keys(v[0] || {})) : '');
+      } else {
+        draftStructure[k] = typeof v;
+      }
+    }
+    console.log('[DropFlow] Draft structure:', JSON.stringify(draftStructure));
+
+    // Build price lookup: normalized specifics values → price
+    const norm = s => String(s || '').trim().toLowerCase();
+    const priceLookup = [];
+    for (const sku of skus) {
+      const values = Object.values(sku.specifics || {}).map(norm).filter(Boolean);
+      const price = computeVariantEbayPrice(sku, productData);
+      if (values.length > 0 && price > 0) {
+        const stock = sku.stock != null ? sku.stock : 1;
+        if (stock <= 0 && skus.some(s => s.stock > 0)) continue; // Skip OOS
+        priceLookup.push({ values, price, qty: 1 });
+      }
+    }
+
+    if (priceLookup.length === 0) {
+      console.warn('[DropFlow] putVariationPricesViaDraftAPI: no priced SKUs');
+      return result;
+    }
+
+    // Helper: match a draft variation entry to our price lookup
+    function matchDraftVariant(draftVariant) {
+      // Extract specifics from draft variant — multiple possible shapes
+      const specificsEntries = [];
+      for (const key of ['variationSpecifics', 'specifics', 'nameValueList', 'variationSpecific']) {
+        const val = draftVariant[key];
+        if (Array.isArray(val)) {
+          for (const item of val) {
+            const name = item.name || item.Name || '';
+            const value = item.value?.[0] || item.Value?.[0] || item.value || item.Value || '';
+            if (value) specificsEntries.push(norm(String(value)));
+          }
+        } else if (val && typeof val === 'object') {
+          for (const v of Object.values(val)) {
+            if (typeof v === 'string') specificsEntries.push(norm(v));
+            else if (Array.isArray(v) && v.length > 0) specificsEntries.push(norm(String(v[0])));
+          }
+        }
+      }
+
+      // Also check top-level string fields that look like specifics
+      for (const [k, v] of Object.entries(draftVariant)) {
+        if (typeof v === 'string' && /size|color|colour|style/i.test(k)) {
+          specificsEntries.push(norm(v));
+        }
+      }
+
+      if (specificsEntries.length === 0) return null;
+
+      // Match against priceLookup
+      let bestMatch = null, bestScore = 0;
+      for (const entry of priceLookup) {
+        let score = 0;
+        for (const val of entry.values) {
+          const re = new RegExp('\\b' + val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+          if (specificsEntries.some(s => s === val || re.test(s))) score++;
+        }
+        if (score > bestScore) { bestScore = score; bestMatch = entry; }
+      }
+      return bestMatch && bestScore >= bestMatch.values.length ? bestMatch : (bestMatch && bestScore > 0 ? bestMatch : null);
+    }
+
+    // Try to update variation prices in the draft
+    if (variationPaths.length > 0) {
+      const draftVariations = variationPaths[0];
+      console.log(`[DropFlow] Draft has ${draftVariations.length} variation entries. Sample:`, JSON.stringify(draftVariations[0]).substring(0, 300));
+
+      let pricedCount = 0;
+      for (const dv of draftVariations) {
+        const match = matchDraftVariant(dv);
+        if (match) {
+          // Set price in multiple possible locations
+          if (dv.price !== undefined || dv.startPrice !== undefined) {
+            if (typeof dv.price === 'object') {
+              dv.price.value = String(match.price);
+            } else if (typeof dv.startPrice === 'object') {
+              dv.startPrice.value = String(match.price);
+            } else {
+              dv.price = { value: String(match.price), currency: 'AUD' };
+            }
+          } else {
+            dv.price = { value: String(match.price), currency: 'AUD' };
+          }
+          // Set quantity
+          if (dv.quantity !== undefined) {
+            dv.quantity = match.qty;
+          } else {
+            dv.quantity = match.qty;
+          }
+          pricedCount++;
+        }
+      }
+
+      console.log(`[DropFlow] Matched ${pricedCount}/${draftVariations.length} draft variants to prices`);
+
+      if (pricedCount > 0) {
+        // Determine which key the variations are stored under
+        const draftKey = draft.variations === draftVariations ? 'variations'
+          : draft.sku === draftVariations ? 'sku'
+          : draft.variationDetails?.variations === draftVariations ? 'variationDetails'
+          : draft.variation === draftVariations ? 'variation'
+          : draft.SKU === draftVariations ? 'SKU'
+          : draft.skus === draftVariations ? 'skus'
+          : 'variations';
+
+        let payload;
+        if (draftKey === 'variationDetails') {
+          payload = { variationDetails: { variations: draftVariations } };
+        } else {
+          payload = { [draftKey]: draftVariations };
+        }
+
+        console.log('[DropFlow] Putting variation prices via draft API...');
+        const ok = await putDraftField(payload, ebayContext);
+        if (ok) {
+          result.success = true;
+          result.pricedCount = pricedCount;
+          console.log(`[DropFlow] ✅ Draft API variation pricing SUCCESS: ${pricedCount} variants priced`);
+        } else {
+          console.warn('[DropFlow] Draft API variation pricing PUT failed — trying alternate payload shapes');
+          // Try alternate shapes
+          const altPayloads = [
+            { variations: draftVariations },
+            { sku: draftVariations },
+            { variation: draftVariations },
+          ].filter(p => Object.keys(p)[0] !== draftKey);
+
+          for (const altPayload of altPayloads) {
+            const altOk = await putDraftField(altPayload, ebayContext);
+            if (altOk) {
+              result.success = true;
+              result.pricedCount = pricedCount;
+              console.log(`[DropFlow] ✅ Draft API variation pricing SUCCESS (alt key "${Object.keys(altPayload)[0]}"): ${pricedCount} variants`);
+              break;
+            }
+          }
+        }
+      }
+    } else {
+      console.warn('[DropFlow] Draft has no variation array. Trying to construct variation payload from scratch...');
+      // Construct variations from our SKU data and PUT them
+      const constructedVariations = priceLookup.map(entry => {
+        const specifics = [];
+        // Reconstruct specifics from the original SKU
+        const matchingSku = skus.find(sku => {
+          const vals = Object.values(sku.specifics || {}).map(norm).filter(Boolean);
+          return vals.length === entry.values.length && vals.every((v, i) => v === entry.values[i]);
+        });
+        if (matchingSku) {
+          for (const [name, value] of Object.entries(matchingSku.specifics || {})) {
+            specifics.push({ name, value: [String(value)] });
+          }
+        }
+        return {
+          variationSpecifics: specifics,
+          price: { value: String(entry.price), currency: 'AUD' },
+          quantity: entry.qty,
+        };
+      });
+
+      // Try multiple payload shapes
+      const payloadsToTry = [
+        { variations: constructedVariations },
+        { sku: constructedVariations },
+        { variation: constructedVariations },
+      ];
+
+      for (const payload of payloadsToTry) {
+        console.log(`[DropFlow] Trying constructed variation payload (key="${Object.keys(payload)[0]}")...`);
+        const ok = await putDraftField(payload, ebayContext);
+        if (ok) {
+          result.success = true;
+          result.pricedCount = constructedVariations.length;
+          console.log(`[DropFlow] ✅ Constructed variation pricing PUT succeeded (key="${Object.keys(payload)[0]}")`);
+          break;
+        }
+      }
+    }
+
+    if (!result.success) {
+      console.warn('[DropFlow] ❌ Draft API variation pricing failed — all approaches exhausted');
+    }
+
+    return result;
   }
 
   /**
