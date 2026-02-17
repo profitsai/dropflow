@@ -1404,6 +1404,25 @@
             } catch (_) {}
           }
           
+          // Check builder completion flag from iframe
+          if (wait > 10 && wait % 5 === 0) {
+            try {
+              const stored = await chrome.storage.local.get('dropflow_builder_complete');
+              const completionData = stored?.dropflow_builder_complete;
+              if (completionData && (Date.now() - completionData.ts) < 120000) {
+                console.warn(`[DropFlow] Builder completion flag detected in early loop (age=${Date.now() - completionData.ts}ms)`);
+                await sleep(2000);
+                try { await chrome.storage.local.remove('dropflow_builder_complete'); } catch (_) {}
+                if (checkVariationsPopulated()) {
+                  await logVariationStep('fillVariations:mskuDialogCompletedViaFlag', { waitMs: wait * 500 });
+                  const cleaned = sanitizeVariationAxes(variations.axes || []);
+                  const axisNameMap = Object.fromEntries(cleaned.map(a => [a.name, a.name]));
+                  return { filledAxes: cleaned.map(a => a.name), axisNameMap };
+                }
+              }
+            } catch (_) {}
+          }
+
           if (wait % 20 === 0) {
             console.log(`[DropFlow] Waiting for MSKU iframe builder flow... ${wait * 500}ms`);
           }
@@ -1815,6 +1834,24 @@
         }
       }
       
+      // FIX: Check if the builder signalled completion via storage flag
+      if (navWait > 10 && navWait % 5 === 0) {
+        try {
+          const stored = await chrome.storage.local.get('dropflow_builder_complete');
+          const completionData = stored?.dropflow_builder_complete;
+          if (completionData && (Date.now() - completionData.ts) < 120000) {
+            console.warn(`[DropFlow] Builder completion flag detected (age=${Date.now() - completionData.ts}ms, iter=${navWait})`);
+            await sleep(2000); // Let eBay sync
+            try { await chrome.storage.local.remove('dropflow_builder_complete'); } catch (_) {}
+            if (checkVariationsPopulated()) {
+              await logVariationStep('fillVariations:builderCompleteFlag', { iter: navWait });
+              const filledAxes = axisMapping.map(m => m.ebayLabel);
+              return { filledAxes, axisNameMap };
+            }
+          }
+        } catch (_) {}
+      }
+
       // FIX: Check if the MSKU dialog closed (iframe builder completed "Save and close")
       if (navWait > 20) {
         const mskuDialogGone = !document.querySelector('.msku-dialog, [class*="msku-dialog"]');
@@ -3042,7 +3079,7 @@
         if (t.length < 80 || t.length > 12000) continue;
         if (!/variation/i.test(t)) continue;
         const hasContinueBtn = queryAllWithShadow('button, [role="button"]', el)
-          .some(b => /^\s*continue\s*$/i.test((b.textContent || '').trim()));
+          .some(b => /^\s*(continue|update\s+variations?)\s*$/i.test((b.textContent || '').trim()));
         if (hasContinueBtn) return el;
       }
       return activeDoc.body || document.body;
@@ -4265,28 +4302,58 @@
       return false;
     }
 
-    const continueBtn = findButtonByText(builderRoot || document, /^\s*continue\s*$/i) || findByText(/\bcontinue\b/i);
+    const continueBtn = findButtonByText(builderRoot || document, /^\s*(continue|update\s+variations?)\s*$/i) || findByText(/\b(continue|update\s+variations?)\b/i);
     if (continueBtn && !continueBtn.disabled) {
       simulateClick(continueBtn);
-      await logVariationStep('variationBuilder:continueClicked', {});
-      // Wait for the builder to transition to photo/pricing page
-      for (let i = 0; i < 24; i++) {
-        await sleep(250);
-        const ctx = detectVariationBuilderContext();
-        if (!ctx.isBuilder || ctx.doc !== activeDoc) break;
-      }
-      console.warn('[DropFlow] Variation builder Continue clicked, checking for photo/pricing page...');
+      await logVariationStep('variationBuilder:continueClicked', { buttonText: (continueBtn.textContent || '').trim() });
+      console.warn(`[DropFlow] Variation builder clicked: "${(continueBtn.textContent || '').trim()}"`);
 
-      // After Continue, eBay shows a photo/pricing/SKU page within the builder.
-      // We need to fill pricing here (per-SKU prices/quantities), then "Save and close".
-      // Wait for the pricing page to load (indicated by "Save and close" button appearing)
-      await sleep(2000);
+      // After clicking Continue/Update variations, wait for the pricing/photo page
+      // to appear. Poll for up to 30s looking for "Save and close" button,
+      // pricing table inputs, or the builder closing entirely.
       const findSaveAndClose = (ctx) => {
         const btns = queryAllWithShadow('button, [role="button"]', ctx || activeDoc);
         return btns.find(b => isElementVisible(b) && /save\s+and\s+close/i.test((b.textContent || '').trim()));
       };
-      let saveCloseBtn = findSaveAndClose(activeDoc);
-      if (!saveCloseBtn) saveCloseBtn = findSaveAndClose(document);
+      const findPricingTable = (ctx) => {
+        const root = ctx || activeDoc;
+        // Look for price/quantity input fields that indicate the combinations table
+        const priceInputs = queryAllWithShadow('input[type="text"], input[type="number"], input:not([type])', root)
+          .filter(el => {
+            const placeholder = (el.getAttribute('placeholder') || '').toLowerCase();
+            const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+            const name = (el.getAttribute('name') || '').toLowerCase();
+            return /price|quantity|qty/i.test(`${placeholder} ${ariaLabel} ${name}`);
+          });
+        return priceInputs.length > 0;
+      };
+
+      let saveCloseBtn = null;
+      let pricingReady = false;
+      for (let pollI = 0; pollI < 120; pollI++) { // 30s max (250ms * 120)
+        await sleep(250);
+        saveCloseBtn = findSaveAndClose(activeDoc) || findSaveAndClose(document);
+        if (saveCloseBtn) {
+          console.warn(`[DropFlow] Save and close button found after ${pollI * 250}ms`);
+          break;
+        }
+        pricingReady = findPricingTable(activeDoc) || findPricingTable(document);
+        if (pricingReady) {
+          console.warn(`[DropFlow] Pricing table detected after ${pollI * 250}ms`);
+          // Give it a moment to fully render
+          await sleep(1000);
+          saveCloseBtn = findSaveAndClose(activeDoc) || findSaveAndClose(document);
+          break;
+        }
+        // Check if builder closed entirely (returned to parent)
+        const ctx = detectVariationBuilderContext();
+        if (!ctx.isBuilder) {
+          console.warn(`[DropFlow] Builder closed after Continue click (${pollI * 250}ms)`);
+          await releaseCrossContextLock();
+          try { await chrome.storage.local.set({ dropflow_builder_complete: { ts: Date.now(), draftId: window.location.href } }); } catch (_) {}
+          return true;
+        }
+      }
       
       if (saveCloseBtn) {
         console.warn('[DropFlow] Builder photo/pricing page detected (Save and close found)');
@@ -8694,7 +8761,7 @@
         if (!t || t.length > 80) continue;
         if (/^\s*\+\s*add\s*$/i.test(t)) hasAdd = true;
         if (/create your own/i.test(t)) hasCreateOwn = true;
-        if (/^\s*continue\s*$/i.test(t)) hasContinue = true;
+        if (/^\s*(continue|update\s+variations?)\s*$/i.test(t)) hasContinue = true;
         if (/^\s*cancel\s*$/i.test(t)) hasCancel = true;
         scanned++;
         if ((hasAdd && hasCreateOwn && hasContinue) || scanned > 1200) break;
