@@ -566,23 +566,22 @@
       }
 
       await _dfLog('STEP5', 'images...');
-      // 5. Upload images — SKIPPED for now (chrome.runtime.sendMessage hangs in MV3)
-      // TODO: Re-enable once SW message channel is fixed
-      await _dfLog('STEP5', 'images SKIPPED (SW sendMessage hangs)');
-      if (false && productData.images && productData.images.length > 0) {
-        for (let imgAttempt = 1; imgAttempt <= 1; imgAttempt++) {
+      // 5. Upload images (re-enabled: sendMessageSafe handles SW timeouts/retries)
+      if (productData.images && productData.images.length > 0) {
+        for (let imgAttempt = 1; imgAttempt <= 3; imgAttempt++) {
           await sleep(500);
           // Refresh headers on retry (eBay may have made new API calls by now)
-          if (imgAttempt > 1 && !ebayContext) {
+          if (imgAttempt > 1) {
+            console.log(`[DropFlow] Image upload retry ${imgAttempt}/3 — refreshing headers...`);
             ebayContext = await getEbayHeaders();
           }
           try {
             results.images = await Promise.race([
               uploadImages(productData.images, ebayContext, productData.preDownloadedImages),
-              new Promise((_, rej) => setTimeout(() => rej(new Error('Image upload timeout (20s)')), 20000))
+              new Promise((_, rej) => setTimeout(() => rej(new Error('Image upload timeout (30s)')), 30000))
             ]);
           } catch (e) {
-            console.warn(`[DropFlow] Image upload attempt ${imgAttempt}/1 threw: ${e.message}`);
+            console.warn(`[DropFlow] Image upload attempt ${imgAttempt}/3 threw: ${e.message}`);
             results.images = false;
           }
           if (results.images) break;
