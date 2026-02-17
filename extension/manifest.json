@@ -203,6 +203,24 @@
     },
     {
       "matches": [
+        "https://www.aliexpress.com/order/confirm*",
+        "https://www.aliexpress.us/order/confirm*",
+        "https://aliexpress.com/order/confirm*",
+        "https://aliexpress.us/order/confirm*",
+        "https://www.aliexpress.com/checkout*",
+        "https://www.aliexpress.us/checkout*",
+        "https://aliexpress.com/checkout*",
+        "https://aliexpress.us/checkout*",
+        "https://www.aliexpress.com/order/checkout*",
+        "https://www.aliexpress.us/order/checkout*"
+      ],
+      "js": [
+        "content-scripts/aliexpress/checkout-address.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
         "https://www.ebay.com/itm/*",
         "https://www.ebay.ca/itm/*",
         "https://www.ebay.co.uk/itm/*",

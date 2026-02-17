@@ -217,6 +217,18 @@ export async function executeAutoOrder(orderId, progressCallback) {
     // Send order details to the content script
     const shippingAddress = order.buyerAddress || settings.defaultShippingAddress;
 
+    // Store pending checkout data so the checkout content script can auto-fill
+    // the address after Buy Now navigates to the checkout page
+    await chrome.storage.local.set({
+      '__dropflow_pending_checkout': {
+        orderId: order.id,
+        shippingAddress,
+        sourceVariant: order.sourceVariant || null,
+        tabId: tab.id,
+        createdAt: Date.now()
+      }
+    });
+
     await chrome.tabs.sendMessage(tab.id, {
       type: 'DROPFLOW_AUTO_ORDER_EXECUTE',
       data: {

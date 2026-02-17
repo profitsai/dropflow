@@ -70,10 +70,11 @@
     const date = extractDate(row);
     const variant = extractVariant(row);
     const sku = extractSku(row);
+    const buyerAddress = extractBuyerAddress(row);
 
     if (!orderId) return null;
 
-    return { orderId, itemId, title, buyerName, price, quantity, date, variant, sku };
+    return { orderId, itemId, title, buyerName, price, quantity, date, variant, sku, buyerAddress };
   }
 
   function parseOrderCard(card) {
@@ -86,8 +87,9 @@
     const date = extractDate(card);
     const variant = extractVariant(card);
     const sku = extractSku(card);
+    const buyerAddress = extractBuyerAddress(card);
 
-    return { orderId, itemId, title, buyerName, price, quantity, date, variant, sku };
+    return { orderId, itemId, title, buyerName, price, quantity, date, variant, sku, buyerAddress };
   }
 
   function parseGenericContainer(container, link) {
@@ -104,7 +106,8 @@
       quantity: extractQuantity(container),
       date: extractDate(container),
       variant: extractVariant(container),
-      sku: extractSku(container)
+      sku: extractSku(container),
+      buyerAddress: extractBuyerAddress(container)
     };
   }
 
@@ -220,6 +223,133 @@
     return m ? m[1] : '';
   }
 
+  /**
+   * Extract buyer shipping address from order element.
+   * On the Seller Hub orders list page, address may be partially visible.
+   * On the order detail page (/sh/ord/details), full address is shown.
+   */
+  function extractBuyerAddress(el) {
+    const address = {
+      fullName: '',
+      addressLine1: '',
+      addressLine2: '',
+      city: '',
+      state: '',
+      postalCode: '',
+      country: '',
+      phone: ''
+    };
+
+    // Check if we're on an order detail page (full address visible)
+    const isDetailPage = location.href.includes('/ord/details') || location.href.includes('/ordm/');
+
+    // Look for address containers
+    const addressEl = el.querySelector(
+      '[class*="ship-to"], [class*="shipping-address"], [class*="ShippingAddress"], ' +
+      '[class*="address-container"], [class*="buyer-address"], [data-test-id*="address"], ' +
+      '[class*="deliveryAddress"], [class*="delivery-address"]'
+    );
+
+    if (addressEl) {
+      return parseAddressBlock(addressEl);
+    }
+
+    // On detail pages, look for the shipping section
+    if (isDetailPage) {
+      const sections = document.querySelectorAll('[class*="section"], [class*="card"], [class*="panel"]');
+      for (const section of sections) {
+        const heading = section.querySelector('h2, h3, h4, [class*="title"], [class*="heading"]');
+        if (heading && /ship\s*to|shipping|delivery/i.test(heading.textContent)) {
+          return parseAddressBlock(section);
+        }
+      }
+    }
+
+    // Fallback: look for address-like text patterns in the element
+    const text = el.textContent || '';
+    const addressMatch = text.match(
+      /(?:Ship\s*to|Shipping\s*address|Deliver\s*to)\s*:?\s*\n?\s*(.+?)(?:\n|$)/i
+    );
+    if (addressMatch) {
+      address.fullName = extractBuyerName(el);
+    }
+
+    return address.fullName ? address : null;
+  }
+
+  /**
+   * Parse an address block element into structured address fields.
+   */
+  function parseAddressBlock(el) {
+    const address = {
+      fullName: '',
+      addressLine1: '',
+      addressLine2: '',
+      city: '',
+      state: '',
+      postalCode: '',
+      country: '',
+      phone: ''
+    };
+
+    const text = el.textContent.trim();
+    const lines = text.split(/\n/).map(l => l.trim()).filter(l => l.length > 0);
+
+    if (lines.length === 0) return null;
+
+    // First line is usually the name
+    address.fullName = lines[0] || '';
+
+    // Look for phone number
+    const phoneMatch = text.match(/(?:phone|tel|mobile)\s*:?\s*([\d\s()+-]{7,20})/i) ||
+                       text.match(/((?:\+?\d{1,3}[\s-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4})/);
+    if (phoneMatch) address.phone = phoneMatch[1].trim();
+
+    // Look for ZIP/postal code (US: 5 or 5+4, other formats)
+    const zipMatch = text.match(/(\d{5}(?:-\d{4})?)/);
+    if (zipMatch) address.postalCode = zipMatch[1];
+
+    // Common countries at end of address
+    const countryPatterns = [
+      'United States', 'US', 'USA', 'Canada', 'CA', 'United Kingdom', 'UK', 'GB',
+      'Australia', 'AU', 'Germany', 'DE', 'France', 'FR', 'Italy', 'IT', 'Spain', 'ES'
+    ];
+    for (const country of countryPatterns) {
+      if (text.includes(country)) {
+        address.country = country;
+        break;
+      }
+    }
+
+    // Try to parse US-style: Street, City, ST ZIP
+    if (lines.length >= 2) {
+      address.addressLine1 = lines[1] || '';
+      if (lines.length >= 3) {
+        // Check if line looks like "City, ST ZIP"
+        const cityStateZip = lines[lines.length - 1].match(/^(.+?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/);
+        if (cityStateZip) {
+          address.city = cityStateZip[1];
+          address.state = cityStateZip[2];
+          address.postalCode = cityStateZip[3];
+          // If there are more lines between address1 and city/state, they're address2
+          if (lines.length >= 4) {
+            address.addressLine2 = lines.slice(2, lines.length - 1).join(', ');
+          }
+        } else {
+          // Best effort: second line is city or address2
+          if (lines.length === 3) {
+            address.city = lines[2];
+          } else {
+            address.addressLine2 = lines[2] || '';
+            address.city = lines[3] || '';
+          }
+        }
+      }
+    }
+
+    return (address.fullName || address.addressLine1) ? address : null;
+  }
+
   // === Message Listener ===
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'DROPFLOW_SCRAPE_EBAY_ORDERS') {
@@ -232,5 +362,60 @@
       }
       return false;
     }
+
+    // Scrape buyer shipping address from order detail page
+    if (msg.type === 'DROPFLOW_SCRAPE_BUYER_ADDRESS') {
+      try {
+        const address = scrapeBuyerAddressFromDetailPage();
+        sendResponse({ success: true, address });
+      } catch (e) {
+        console.error('[DropFlow Orders] Address scrape error:', e);
+        sendResponse({ error: e.message });
+      }
+      return false;
+    }
   });
+
+  /**
+   * Scrape buyer shipping address from an eBay order detail page.
+   * Called when on /sh/ord/details or similar pages.
+   */
+  function scrapeBuyerAddressFromDetailPage() {
+    // Look for the shipping address section on the detail page
+    const selectors = [
+      '[class*="ship-to"], [class*="shipping-address"], [class*="ShippingAddress"]',
+      '[class*="deliveryAddress"], [class*="delivery-address"]',
+      '[data-test-id*="shipping-address"], [data-test-id*="ship-to"]'
+    ];
+
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el) {
+        const address = parseAddressBlock(el);
+        if (address && address.fullName) {
+          console.log('[DropFlow Orders] Scraped buyer address from detail page:', address);
+          return address;
+        }
+      }
+    }
+
+    // Broader search: find sections with "Ship to" heading
+    const allElements = document.querySelectorAll('h2, h3, h4, dt, [class*="label"], [class*="title"]');
+    for (const heading of allElements) {
+      if (/ship\s*to|shipping\s*address|deliver\s*to/i.test(heading.textContent)) {
+        const container = heading.closest('section, [class*="card"], [class*="panel"], [class*="section"], dl, div') ||
+                          heading.parentElement;
+        if (container) {
+          const address = parseAddressBlock(container);
+          if (address && (address.fullName || address.addressLine1)) {
+            console.log('[DropFlow Orders] Scraped buyer address:', address);
+            return address;
+          }
+        }
+      }
+    }
+
+    console.warn('[DropFlow Orders] Could not find buyer address on detail page');
+    return null;
+  }
 })();
