@@ -33,7 +33,11 @@ import {
   SCRAPE_ACTIVE_LISTINGS,
   START_SKU_BACKFILL, PAUSE_SKU_BACKFILL, TERMINATE_SKU_BACKFILL,
   SKU_BACKFILL_PROGRESS, SKU_BACKFILL_COMPLETE,
-  REVISE_EBAY_LISTING
+  REVISE_EBAY_LISTING,
+  GET_PENDING_ORDERS, GET_ALL_ORDERS, CREATE_ORDER, UPDATE_ORDER_STATUS,
+  CANCEL_ORDER, START_AUTO_ORDER, AUTO_ORDER_PROGRESS, AUTO_ORDER_READY,
+  CONFIRM_ORDER_PAYMENT, GET_AUTO_ORDER_SETTINGS, SAVE_AUTO_ORDER_SETTINGS,
+  START_SALE_POLLING, STOP_SALE_POLLING, POLL_SALES_NOW, SALE_POLL_STATUS
 } from '../lib/message-types.js';
 
 import {
@@ -44,8 +48,20 @@ import {
   DEFAULTS,
   TRACKED_PRODUCTS, MONITOR_SETTINGS, MONITOR_ALERTS,
   MONITOR_RUNNING, MONITOR_LAST_RUN, MONITOR_STATS,
-  MONITOR_POSITION, MONITOR_SOFT_BLOCK
+  MONITOR_POSITION, MONITOR_SOFT_BLOCK,
+  AUTO_ORDERS, AUTO_ORDER_SETTINGS
 } from '../lib/storage-keys.js';
+
+import {
+  getOrders, createOrder as createAutoOrder, updateOrder, cancelOrder as cancelAutoOrderFn,
+  getPendingOrders, executeAutoOrder, confirmOrderPayment,
+  getAutoOrderSettings, saveAutoOrderSettings
+} from '../lib/auto-order.js';
+
+import {
+  runSalePollCycle, startSalePolling, stopSalePolling,
+  SALE_POLL_ALARM, SALE_POLL_LAST_RUN, SALE_POLL_STATS
+} from '../lib/sale-poller.js';
 
 import {
   createTabAndWait, extractAmazonDomain, amazonToEbayDomain, semaphore,
@@ -558,6 +574,67 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       handleOpenPage(payload);
       sendResponse({ success: true });
       return false;
+
+    // --- Auto-Ordering ---
+    case GET_ALL_ORDERS:
+      getOrders().then(orders => sendResponse({ orders }));
+      return true;
+
+    case GET_PENDING_ORDERS:
+      getPendingOrders().then(orders => sendResponse({ orders }));
+      return true;
+
+    case CREATE_ORDER:
+      createAutoOrder(payload.saleData).then(order => sendResponse({ order })).catch(e => sendResponse({ error: e.message }));
+      return true;
+
+    case UPDATE_ORDER_STATUS:
+      updateOrder(payload.orderId, payload.updates).then(r => sendResponse(r)).catch(e => sendResponse({ error: e.message }));
+      return true;
+
+    case CANCEL_ORDER:
+      cancelAutoOrderFn(payload.orderId).then(r => sendResponse(r)).catch(e => sendResponse({ error: e.message }));
+      return true;
+
+    case START_AUTO_ORDER:
+      executeAutoOrder(payload.orderId, (id, status, msg) => {
+        chrome.runtime.sendMessage({ type: AUTO_ORDER_PROGRESS, data: { orderId: id, status, message: msg } }).catch(() => {});
+      }).then(r => sendResponse(r)).catch(e => sendResponse({ error: e.message }));
+      return true;
+
+    case CONFIRM_ORDER_PAYMENT:
+      confirmOrderPayment(payload.orderId, payload.sourceOrderId).then(r => sendResponse(r)).catch(e => sendResponse({ error: e.message }));
+      return true;
+
+    case GET_AUTO_ORDER_SETTINGS:
+      getAutoOrderSettings().then(settings => sendResponse({ settings }));
+      return true;
+
+    case SAVE_AUTO_ORDER_SETTINGS:
+      saveAutoOrderSettings(payload.settings).then(() => sendResponse({ success: true }));
+      return true;
+
+    // --- Sale Polling ---
+    case START_SALE_POLLING:
+      startSalePolling(payload.intervalMinutes || 5).then(() => sendResponse({ success: true }));
+      return true;
+
+    case STOP_SALE_POLLING:
+      stopSalePolling().then(() => sendResponse({ success: true }));
+      return true;
+
+    case POLL_SALES_NOW:
+      runSalePollCycle().then(result => sendResponse(result)).catch(e => sendResponse({ error: e.message }));
+      return true;
+
+    case SALE_POLL_STATUS:
+      chrome.storage.local.get([SALE_POLL_LAST_RUN, SALE_POLL_STATS]).then(data => {
+        sendResponse({
+          lastRun: data[SALE_POLL_LAST_RUN] || null,
+          stats: data[SALE_POLL_STATS] || null
+        });
+      });
+      return true;
 
     // --- Stock & Price Monitor ---
     case ADD_TRACKED_PRODUCT:
@@ -3588,6 +3665,22 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     return;
   }
 
+  // --- Sale Poll Alarm ---
+  if (alarm.name === SALE_POLL_ALARM) {
+    console.log('[DropFlow] Sale poll alarm fired');
+    runSalePollCycle().then(result => {
+      if (result.newOrders > 0) {
+        console.log(`[DropFlow SalePoller] Created ${result.newOrders} new auto-orders`);
+      }
+      if (result.errors.length > 0) {
+        console.warn('[DropFlow SalePoller] Errors:', result.errors);
+      }
+    }).catch(e => {
+      console.error('[DropFlow SalePoller] Poll cycle failed:', e);
+    });
+    return;
+  }
+
   // --- Monitor Alarm ---
   if (alarm.name !== MONITOR_ALARM_NAME) return;
 
@@ -4797,6 +4890,14 @@ chrome.runtime.onInstalled.addListener((details) => {
       });
     }
   });
+
+  // Restore sale polling alarm if auto-ordering is enabled
+  getAutoOrderSettings().then(settings => {
+    if (settings.enabled) {
+      startSalePolling(5);
+      console.log('[DropFlow SalePoller] Alarm restored after install/update');
+    }
+  }).catch(() => {});
 });
 
 // Clean up stored Amazon data and captured eBay headers when tabs are closed

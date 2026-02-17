@@ -39,6 +39,10 @@ export const MONITOR_STATS = 'monitorStats';
 export const MONITOR_POSITION = 'monitorPosition';
 export const MONITOR_SOFT_BLOCK = 'monitorSoftBlock';
 
+// === Auto-Ordering ===
+export const AUTO_ORDERS = 'autoOrders';
+export const AUTO_ORDER_SETTINGS = 'autoOrderSettings';
+
 // === Defaults ===
 export const DEFAULTS = {
   [BACKEND_URL]: 'https://dropflow-api.onrender.com',
@@ -70,5 +74,22 @@ export const DEFAULTS = {
     priceRounding: '99',
     alertBadge: true,
     alertNotification: true
+  },
+  [AUTO_ORDER_SETTINGS]: {
+    enabled: false,
+    autoTriggerOnSale: false,
+    requireManualConfirm: true,
+    defaultShippingAddress: {
+      fullName: '',
+      addressLine1: '',
+      addressLine2: '',
+      city: '',
+      state: '',
+      postalCode: '',
+      country: '',
+      phone: ''
+    },
+    maxAutoOrderPrice: 100,
+    notifyOnReady: true
   }
 };
