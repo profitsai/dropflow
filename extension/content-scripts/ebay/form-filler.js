@@ -323,6 +323,14 @@
    */
   async function fillForm(productData) {
     console.log('[DropFlow] fillForm() ENTERED — url=' + window.location.href.substring(0, 80) + ' hasVariations=' + !!productData?.variations?.hasVariations);
+    const _dfSteps = [];
+    async function _dfLog(step, detail) {
+      const msg = `[${new Date().toISOString().substr(11,12)}] ${step}: ${detail || ''}`;
+      _dfSteps.push(msg);
+      console.log('[DropFlow] ' + msg);
+      try { await chrome.storage.local.set({ _dropflow_fillform_trace: _dfSteps }); } catch(_) {}
+    }
+    await _dfLog('ENTER', 'url=' + window.location.href.substring(0, 60));
     const results = {
       title: false,
       price: false,
@@ -366,8 +374,11 @@
       }
 
       // 0b. Wait for form to render, then scroll to trigger lazy-loading
+      await _dfLog('STEP0', 'waitForFormReady...');
       await waitForFormReady(15000);
+      await _dfLog('STEP0', 'scrollPageToLoadAll...');
       await scrollPageToLoadAll();
+      await _dfLog('STEP0', 'scroll done');
 
       // 0b. Prefetch eBay draft API headers (captured by background webRequest listener).
       //     These are needed for direct API PUT to bypass React state.
@@ -384,7 +395,7 @@
         await scrollToAndWait(titleInput, 300);
         const title = productData.ebayTitle || productData.title || '';
         results.title = await commitInputValue(titleInput, title.substring(0, 80));
-        console.log(`[DropFlow] Title committed: "${title.substring(0, 40)}..."`);
+        await _dfLog("TITLE", "committed"); console.log(`[DropFlow] Title committed: "${title.substring(0, 40)}..."`);
 
         // API PUT fallback for title
         if (ebayContext && ebayContext.draftId) {
@@ -416,7 +427,7 @@
         if (priceInput) {
           await scrollToAndWait(priceInput, 300);
           results.price = await commitInputValue(priceInput, String(productData.ebayPrice));
-          console.log(`[DropFlow] Price committed (DOM): $${productData.ebayPrice}`);
+          await _dfLog("PRICE", "committed"); console.log(`[DropFlow] Price committed (DOM): $${productData.ebayPrice}`);
         } else {
           console.warn('[DropFlow] Price input not found after 3 attempts');
         }
@@ -437,7 +448,7 @@
         }
       }
 
-      // 3. Set condition — may not have been set during prelist/identify flow
+      await _dfLog("STEP3", "condition..."); // 3. Set condition — may not have been set during prelist/identify flow
       // Check if condition is already set by looking for the recommendation buttons
       const condRecoBtns = document.querySelectorAll('button.condition-recommendation-value');
       if (condRecoBtns.length > 0) {
@@ -502,8 +513,8 @@
         }
       }
 
-      // 4. Fill description (hybrid DOM + API PUT) â€" with retry
-      for (let descAttempt = 1; descAttempt <= 3; descAttempt++) {
+      await _dfLog('STEP4', 'description...'); // 4. Fill description (hybrid DOM + API PUT) â€" with retry
+      for (let descAttempt = 1; descAttempt <= 1; descAttempt++) { // Reduced to 1 attempt for speed
         await sleep(1000);
         // Retry header fetch if we didn't get them earlier (eBay may not have made
         // a draft API request yet when the page first loaded)
@@ -524,6 +535,7 @@
         if (descArea) await scrollToAndWait(descArea, 1000);
       }
 
+      await _dfLog('STEP5', 'images...');
       // 5. Upload images via background fetch proxy â€" with retry
       if (productData.images && productData.images.length > 0) {
         for (let imgAttempt = 1; imgAttempt <= 3; imgAttempt++) {
@@ -616,7 +628,8 @@
       }
 
       if (hasVariations) {
-        console.log('[DropFlow] Multi-variation product detected, starting DOM variation flow...');
+        await _dfLog('VARIATIONS', 'starting...'); console.log('[DropFlow] Multi-variation product detected, starting DOM variation flow...');
+      await _dfLog('STEP6', 'variations starting...');
         showVariationDiagnostic({
           status: 'starting',
           axes: productData.variations.axes?.map(a => a.name) || [],

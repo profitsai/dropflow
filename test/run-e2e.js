@@ -1,7 +1,7 @@
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const WS = 'ws://127.0.0.1:52111/devtools/browser/399d440a-d2e4-4410-8a3e-a9a0743736f5';
+const WS = 'ws://127.0.0.1:57542/devtools/browser/299cf9f0-0bf9-4e4d-9284-04884acce8de';
 const EXT = 'hikiofeedjngalncoapgpmljpaoeolci';
 const ALI_URL = 'https://www.aliexpress.com/item/1005006995032850.html';
 const log = [];
