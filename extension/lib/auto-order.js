@@ -57,7 +57,16 @@ export async function saveAutoOrderSettings(settings) {
  */
 export async function createOrder(saleData) {
   const orders = await getOrders();
-  
+
+  // Prevent duplicate orders for the same eBay sale
+  if (saleData.ebayOrderId) {
+    const existing = orders.find(o => o.ebayOrderId === saleData.ebayOrderId);
+    if (existing) {
+      console.warn(`[DropFlow] Duplicate order prevented: ebayOrderId ${saleData.ebayOrderId} already has order ${existing.id} (status: ${existing.status})`);
+      return existing;
+    }
+  }
+
   // Look up source product from tracked products
   const tracked = await chrome.storage.local.get(TRACKED_PRODUCTS);
   const trackedProducts = tracked[TRACKED_PRODUCTS] || [];
