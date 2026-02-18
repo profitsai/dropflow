@@ -567,8 +567,9 @@
 
       await _dfLog('STEP5', 'images...');
       // 5. Upload images (re-enabled: sendMessageSafe handles SW timeouts/retries)
+      // Capped at 2 retries (was 3) to reduce total time before variations
       if (productData.images && productData.images.length > 0) {
-        for (let imgAttempt = 1; imgAttempt <= 3; imgAttempt++) {
+        for (let imgAttempt = 1; imgAttempt <= 2; imgAttempt++) {
           await sleep(500);
           // Refresh headers on retry (eBay may have made new API calls by now)
           if (imgAttempt > 1) {
@@ -600,21 +601,44 @@
       }
 
       // 5a. Verify photos persisted — poll draft API to confirm
+      // IMPORTANT: Cap total verification time to prevent stalling the entire form fill.
+      // The ensurePhotosInDraft fallback can hang for minutes if the SW is dead (MV3 lifecycle).
       if (productData.images?.length > 0 && results.images) {
-        console.log('[DropFlow] Verifying photos persisted to draft...');
-        const photosConfirmed = await waitForDraftPhotos(ebayContext, 30000);
-        if (!photosConfirmed) {
-          console.warn('[DropFlow] Photos not confirmed in draft — attempting EPS + draft PUT fallback...');
-          const fallbackOk = await ensurePhotosInDraft(productData.images, ebayContext, productData.preDownloadedImages);
-          if (fallbackOk) {
-            console.log('[DropFlow] Photo fallback (EPS + draft PUT) succeeded');
-            results.images = true;
-          } else {
-            console.warn('[DropFlow] Photo fallback also failed — images may be missing');
-            results.images = false;
+        await _dfLog('STEP5a', 'verifying photos in draft...');
+        const verifyStart = Date.now();
+        const VERIFY_TIMEOUT = 20000; // 20s max for verification (was unbounded)
+        try {
+          const photosConfirmed = await Promise.race([
+            waitForDraftPhotos(ebayContext, 15000), // reduced from 30s
+            new Promise(resolve => setTimeout(() => resolve(false), VERIFY_TIMEOUT))
+          ]);
+          if (!photosConfirmed) {
+            const elapsed = Date.now() - verifyStart;
+            console.warn(`[DropFlow] Photos not confirmed in draft after ${elapsed}ms — attempting quick EPS fallback...`);
+            // Only attempt fallback if we have pre-downloaded images (avoids SW dependency)
+            const hasPreDownloaded = Array.isArray(productData.preDownloadedImages) && productData.preDownloadedImages.some(d => d !== null);
+            if (hasPreDownloaded && ebayContext?.draftId) {
+              const fallbackOk = await Promise.race([
+                ensurePhotosInDraft(productData.images, ebayContext, productData.preDownloadedImages),
+                new Promise(resolve => setTimeout(() => resolve(false), 15000)) // 15s cap on fallback
+              ]);
+              if (fallbackOk) {
+                console.log('[DropFlow] Photo fallback (EPS + draft PUT) succeeded');
+                results.images = true;
+              } else {
+                console.warn('[DropFlow] Photo fallback timed out or failed — continuing anyway (photos may already be uploaded via DOM)');
+              }
+            } else {
+              console.warn('[DropFlow] Skipping photo fallback (no pre-downloaded images or no draftId) — continuing to next step');
+            }
           }
+        } catch (e) {
+          console.warn('[DropFlow] Photo verification error:', e.message, '— continuing to next step');
         }
+        await _dfLog('STEP5a', `photo verification complete (${Date.now() - verifyStart}ms)`);
       }
+
+      await _dfLog('STEP5b', `proceeding to variations (hasVariations=${!!hasVariations})`);
 
       // 5b. Fill variations (multi-SKU listing) via DOM automation
       // The eBay /lstng API does NOT support variations â€" DOM automation is required.
@@ -671,7 +695,13 @@
         });
         let varResult = null;
         try {
-          varResult = await fillVariations(productData);
+          varResult = await Promise.race([
+            fillVariations(productData),
+            new Promise((resolve) => setTimeout(() => {
+              console.warn('[DropFlow] fillVariations timed out after 120s — proceeding without variations');
+              resolve(null);
+            }, 120000))
+          ]);
         } catch (e) {
           console.error('[DropFlow] fillVariations threw:', e);
           varResult = null;
@@ -859,6 +889,7 @@
 
       // 7. Fill ALL required item specifics (Brand + everything else) via AI + DOM + API PUT
       //    Skip labels already filled as variation axes (multi-value specifics)
+      await _dfLog('STEP7', 'item specifics starting...');
       await sleep(1000);
       // One more header fetch attempt if still missing
       if (!ebayContext) {
@@ -876,6 +907,8 @@
           results.itemSpecifics = false;
         }
       }
+
+      await _dfLog('STEP8', 'all field filling complete, preparing to submit...');
 
       // Brief pause to let eBay process changes
       await sleep(2000);
@@ -1643,6 +1676,7 @@
   }
 
   async function fillVariations(productData) {
+    console.log('[DropFlow] ▶ fillVariations() ENTERED');
     const variations = productData.variations;
     if (!variations?.hasVariations) {
       console.log('[DropFlow] No variations to fill (hasVariations is false)');
@@ -1944,6 +1978,7 @@
     // =====================================================
     // Phase A: Ensure VARIATIONS controls are reachable
     // =====================================================
+    console.log('[DropFlow] ▶ fillVariations Phase A: ensuring variations controls are reachable');
     // Important: variations may already be enabled from a previous run or by user action.
     // If Edit is already visible, skip settings toggle entirely.
     let preFoundEditBtn = findVariationEditButton();
@@ -1997,6 +2032,7 @@
     // =====================================================
     // Phase B: Click Edit/Create on the VARIATIONS section
     // =====================================================
+    console.log('[DropFlow] ▶ fillVariations Phase B: clicking Edit/Create button');
     await sleep(1000);
     const variationsSection = findVariationsSection();
     if (variationsSection) await scrollToAndWait(variationsSection, 500);
