@@ -482,3 +482,35 @@ tbody tr:hover { background: #1a2a50; }
   .header-row { flex-direction: column; gap: 12px; }
   .modal-dialog { width: 95vw; }
 }
+
+/* === EcomSniper-inspired Progress Stats === */
+.progress-details {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+}
+.progress-controls {
+  display: flex;
+  gap: 6px;
+}
+.progress-stats {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: #aaa;
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #0f1a30;
+  border-radius: 6px;
+}
+.progress-stats strong {
+  color: #fff;
+}
+
+/* === CSV Import === */
+.csv-import-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

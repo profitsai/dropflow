@@ -38,6 +38,17 @@ export const MONITOR_LAST_RUN = 'monitorLastRun';
 export const MONITOR_STATS = 'monitorStats';
 export const MONITOR_POSITION = 'monitorPosition';
 export const MONITOR_SOFT_BLOCK = 'monitorSoftBlock';
+export const MONITOR_PAUSED = 'monitorPaused';
+export const MONITOR_SUPPLIER_TAB = 'monitorSupplierTabId';  // EcomSniper-style reusable tab
+
+// === Page-Based Tracker (EcomSniper-style) ===
+export const TRACKER_SETTINGS = 'trackerSettings';
+export const TRACKER_RUNNING = 'trackerRunning';
+export const TRACKER_POSITION = 'trackerPosition';
+export const TRACKER_PAGE = 'trackerPage';
+export const TRACKER_TOTAL_PAGES = 'trackerTotalPages';
+export const TRACKER_TAB_ID = 'trackerTabId';
+export const TRACKER_LOGS = 'trackerLogs';
 
 // === Auto-Ordering ===
 export const AUTO_ORDERS = 'autoOrders';
@@ -74,6 +85,40 @@ export const DEFAULTS = {
     priceRounding: '99',
     alertBadge: true,
     alertNotification: true
+  },
+  [TRACKER_SETTINGS]: {
+    enableStockMonitor: true,
+    enablePriceMonitor: true,
+    primeFilter: 'all',        // 'all' | 'prime_only'
+    restockQuantity: 1,
+    pricingOption: 'markup',   // 'markup' | 'variable'
+    markupPercentage: 100,
+    priceTriggerThreshold: 2,  // ±$ threshold
+    priceEndingFilter: '',     // e.g. '99,97,95' or empty
+    pruneNoSku: false,
+    pruneNoSkuAction: 'oos',   // 'delete' | 'oos'
+    pruneBrokenSku: false,
+    pruneBrokenSkuAction: 'oos',
+    pruneNotFound: false,
+    pruneNotFoundAction: 'oos',
+    pruneSkuChanged: false,
+    pruneSkuChangedAction: 'oos',
+    pruneNoSales: false,
+    pruneNoSalesAction: 'oos',
+    pruneNoSalesDays: 30,
+    pruneNoSalesCount: 0,
+    continuousTracking: false,
+    trackingTimeout: 60,       // seconds
+    logData: true,
+    pinTabs: true,
+    keepEbayPageOpen: false,
+    forceDomain: false,
+    forceRestock: false,
+    forceRestockQty: 1,
+    itemsPerPage: 200,
+    ebayDomain: 'com.au',
+    amazonDomain: 'com.au',
+    oosAction: 'zero',        // 'zero' | 'delete'
   },
   [AUTO_ORDER_SETTINGS]: {
     enabled: false,

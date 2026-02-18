@@ -249,7 +249,8 @@
         "https://www.ebay.nl/sh/lst/active*"
       ],
       "js": [
-        "content-scripts/ebay/active-listings-scraper.js"
+        "content-scripts/ebay/active-listings-scraper.js",
+        "content-scripts/ebay/seller-hub-tracker.js"
       ],
       "run_at": "document_idle"
     }

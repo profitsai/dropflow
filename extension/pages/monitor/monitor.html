@@ -5,6 +5,220 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DropFlow - Stock & Price Monitor</title>
   <link rel="stylesheet" href="monitor.css">
+  <style>
+    /* === Tracker UI (EcomSniper-style) === */
+    .tracker-section {
+      background: linear-gradient(135deg, #0f1a30 0%, #1a1a2e 100%);
+      border: 1px solid #2a2a4a;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .tracker-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .tracker-header h2 {
+      margin: 0;
+      font-size: 18px;
+      color: #fff;
+    }
+    .tracker-header .badge {
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .tracker-controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    .tracker-toggle {
+      position: relative;
+      width: 48px;
+      height: 24px;
+      background: #333;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+    .tracker-toggle.active {
+      background: #4caf50;
+    }
+    .tracker-toggle::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      background: #fff;
+      border-radius: 50%;
+      transition: transform 0.3s;
+    }
+    .tracker-toggle.active::after {
+      transform: translateX(24px);
+    }
+
+    /* Progress Bars (fixed position overlay) */
+    .tracker-progress-overlay {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 9999;
+      width: 320px;
+      background: #1a1a2e;
+      border: 1px solid #3a86ff;
+      border-radius: 8px;
+      padding: 12px;
+      display: none;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    .tracker-progress-overlay .progress-item {
+      margin-bottom: 8px;
+    }
+    .tracker-progress-overlay .progress-item:last-child {
+      margin-bottom: 0;
+    }
+    .tracker-progress-overlay .progress-label {
+      font-size: 11px;
+      color: #aaa;
+      margin-bottom: 4px;
+    }
+    .tracker-progress-overlay .progress-bar-track {
+      height: 18px;
+      background: #0a0a1e;
+      border-radius: 9px;
+      overflow: hidden;
+      position: relative;
+    }
+    .tracker-progress-overlay .progress-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #3a86ff, #00c853);
+      border-radius: 9px;
+      transition: width 0.3s;
+      min-width: 0;
+    }
+    .tracker-progress-overlay .progress-text {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      text-align: center;
+      line-height: 18px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .tracker-progress-overlay .current-item-text {
+      font-size: 10px;
+      color: #888;
+      margin-top: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Filter checkboxes grid */
+    .tracker-filters {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .tracker-filter-group {
+      background: #0a0a1e;
+      border: 1px solid #222;
+      border-radius: 6px;
+      padding: 12px;
+    }
+    .tracker-filter-group h3 {
+      margin: 0 0 10px 0;
+      font-size: 14px;
+      color: #3a86ff;
+    }
+    .tracker-filter-group .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 13px;
+      color: #ccc;
+    }
+    .tracker-filter-group .sub-option {
+      margin-left: 24px;
+      margin-top: 4px;
+      margin-bottom: 6px;
+    }
+    .tracker-filter-group .sub-option label {
+      font-size: 12px;
+      color: #999;
+    }
+    .tracker-filter-group .sub-option input,
+    .tracker-filter-group .sub-option select {
+      padding: 4px 8px;
+      background: #1a1a2e;
+      border: 1px solid #333;
+      border-radius: 4px;
+      color: #fff;
+      font-size: 12px;
+      width: auto;
+    }
+    .pruning-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 6px;
+      font-size: 12px;
+    }
+    .pruning-row select {
+      padding: 2px 6px;
+      background: #1a1a2e;
+      border: 1px solid #333;
+      border-radius: 4px;
+      color: #fff;
+      font-size: 11px;
+    }
+    .tracker-position-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 12px;
+      font-size: 12px;
+      color: #888;
+    }
+    .tracker-position-row input {
+      width: 60px;
+      padding: 4px 8px;
+      background: #1a1a2e;
+      border: 1px solid #333;
+      border-radius: 4px;
+      color: #fff;
+      font-size: 12px;
+      text-align: center;
+    }
+    .tracker-log-container {
+      max-height: 200px;
+      overflow-y: auto;
+      background: #0a0a0a;
+      border: 1px solid #222;
+      border-radius: 4px;
+      padding: 8px;
+      font-family: monospace;
+      font-size: 11px;
+      color: #aaa;
+      margin-top: 12px;
+    }
+    .tracker-log-container .log-warn { color: #ff9800; }
+    .tracker-log-container .log-error { color: #f44336; }
+    @media (max-width: 768px) {
+      .tracker-filters { grid-template-columns: 1fr; }
+    }
+  </style>
 </head>
 <body>
   <div class="container">
@@ -20,6 +234,206 @@
         </div>
       </div>
     </header>
+
+    <!-- ========================================= -->
+    <!-- EcomSniper-Style Page Tracker              -->
+    <!-- ========================================= -->
+    <div class="tracker-section" id="tracker-section">
+      <div class="tracker-header">
+        <h2>📊 Page-Based Tracker <span style="font-size:11px;color:#888;font-weight:normal">(EcomSniper-style)</span></h2>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span id="tracker-status-badge" class="badge badge-stopped" style="font-size:11px">Stopped</span>
+        </div>
+      </div>
+
+      <div class="tracker-controls">
+        <button id="btn-start-tracker" class="btn btn-primary">▶ Start Tracking</button>
+        <button id="btn-stop-tracker" class="btn btn-danger" style="display:none">■ Stop</button>
+        <button id="btn-reset-tracker" class="btn btn-secondary btn-small">↺ Reset Position</button>
+      </div>
+
+      <!-- Tracker Filters -->
+      <div class="tracker-filters">
+        <!-- Stock Monitor -->
+        <div class="tracker-filter-group">
+          <h3>Stock Monitor</h3>
+          <label class="checkbox-label">
+            <input type="checkbox" id="trk-stock-enable" checked>
+            <span>Enable Stock Monitor</span>
+          </label>
+          <div class="sub-option">
+            <label>Prime Filter:</label>
+            <select id="trk-prime-filter">
+              <option value="all">All Items</option>
+              <option value="prime_only">Prime Only</option>
+            </select>
+          </div>
+          <div class="sub-option">
+            <label>Restock Quantity:</label>
+            <input type="number" id="trk-restock-qty" value="1" min="1" max="999" style="width:60px">
+          </div>
+          <label class="checkbox-label" style="margin-top:8px">
+            <input type="checkbox" id="trk-force-restock">
+            <span>Force stock to</span>
+            <input type="number" id="trk-force-restock-qty" value="1" min="1" max="999" style="width:50px;margin-left:4px">
+            <span>if available</span>
+          </label>
+        </div>
+
+        <!-- Price Monitor -->
+        <div class="tracker-filter-group">
+          <h3>Price Monitor</h3>
+          <label class="checkbox-label">
+            <input type="checkbox" id="trk-price-enable" checked>
+            <span>Enable Price Monitor</span>
+          </label>
+          <div class="sub-option">
+            <label>Pricing Option:</label>
+            <select id="trk-pricing-option">
+              <option value="markup">Markup Pricing</option>
+              <option value="variable">Variable Pricing</option>
+            </select>
+          </div>
+          <div class="sub-option">
+            <label>Markup Percentage:</label>
+            <input type="number" id="trk-markup-pct" value="100" min="1" max="2000" style="width:70px">%
+          </div>
+          <div class="sub-option">
+            <label>Price Trigger Threshold (±$):</label>
+            <input type="number" id="trk-price-threshold" value="2" min="0" step="0.5" style="width:60px">
+          </div>
+          <div class="sub-option">
+            <label>Only monitor items with price ending:</label>
+            <input type="text" id="trk-price-ending" placeholder="e.g. 99,97,95" style="width:100px">
+          </div>
+        </div>
+
+        <!-- Pruning Options -->
+        <div class="tracker-filter-group">
+          <h3>Pruning Options</h3>
+          <div class="pruning-row">
+            <input type="checkbox" id="trk-prune-no-sku">
+            <select id="trk-prune-no-sku-action"><option value="oos">OOS</option><option value="delete">Delete</option></select>
+            <span>items with no SKU</span>
+          </div>
+          <div class="pruning-row">
+            <input type="checkbox" id="trk-prune-broken-sku">
+            <select id="trk-prune-broken-sku-action"><option value="oos">OOS</option><option value="delete">Delete</option></select>
+            <span>items with broken SKU</span>
+          </div>
+          <div class="pruning-row">
+            <input type="checkbox" id="trk-prune-not-found">
+            <select id="trk-prune-not-found-action"><option value="oos">OOS</option><option value="delete">Delete</option></select>
+            <span>items not found on Amazon</span>
+          </div>
+          <div class="pruning-row">
+            <input type="checkbox" id="trk-prune-sku-changed">
+            <select id="trk-prune-sku-changed-action"><option value="oos">OOS</option><option value="delete">Delete</option></select>
+            <span>items where SKU changed</span>
+          </div>
+          <div class="pruning-row">
+            <input type="checkbox" id="trk-prune-no-sales">
+            <select id="trk-prune-no-sales-action"><option value="oos">OOS</option><option value="delete">Delete</option></select>
+            <span>items with ≤</span>
+            <input type="number" id="trk-prune-no-sales-count" value="0" min="0" style="width:40px">
+            <span>sales older than</span>
+            <input type="number" id="trk-prune-no-sales-days" value="30" min="1" style="width:50px">
+            <span>days</span>
+          </div>
+        </div>
+
+        <!-- Additional Settings -->
+        <div class="tracker-filter-group">
+          <h3>Settings</h3>
+          <label class="checkbox-label">
+            <input type="checkbox" id="trk-continuous">
+            <span>Enable Continuous Tracking</span>
+          </label>
+          <div class="sub-option">
+            <label>Tracking Timeout (seconds):</label>
+            <input type="number" id="trk-timeout" value="60" min="10" max="300" style="width:60px">
+          </div>
+          <label class="checkbox-label">
+            <input type="checkbox" id="trk-log-data" checked>
+            <span>Log Data</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="trk-pin-tabs" checked>
+            <span>Pin Tabs</span>
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="trk-keep-ebay-open">
+            <span>Keep eBay Page Open</span>
+          </label>
+          <div class="sub-option">
+            <label>eBay Domain:</label>
+            <select id="trk-ebay-domain">
+              <option value="com.au" selected>ebay.com.au (AU)</option>
+              <option value="com">ebay.com (US)</option>
+              <option value="co.uk">ebay.co.uk (UK)</option>
+              <option value="ca">ebay.ca (CA)</option>
+              <option value="de">ebay.de (DE)</option>
+            </select>
+          </div>
+          <div class="sub-option">
+            <label>Amazon Domain:</label>
+            <select id="trk-amazon-domain">
+              <option value="com.au" selected>amazon.com.au (AU)</option>
+              <option value="com">amazon.com (US)</option>
+              <option value="co.uk">amazon.co.uk (UK)</option>
+              <option value="ca">amazon.ca (CA)</option>
+              <option value="de">amazon.de (DE)</option>
+            </select>
+          </div>
+          <div class="sub-option">
+            <label>OOS Action:</label>
+            <select id="trk-oos-action">
+              <option value="zero">Set Quantity to 0</option>
+              <option value="delete">Delete/End Listing</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Position / Page -->
+      <div class="tracker-position-row">
+        <span>Page:</span>
+        <input type="number" id="trk-current-page" value="1" min="1">
+        <span>/ <span id="trk-total-pages">1</span></span>
+        <span style="margin-left:16px">Position:</span>
+        <input type="number" id="trk-current-position" value="1" min="1">
+        <span>/ <span id="trk-total-on-page">0</span></span>
+        <button id="btn-save-tracker-settings" class="btn btn-small btn-secondary" style="margin-left:auto">Save Settings</button>
+        <span id="tracker-settings-saved" class="save-confirm" style="display:none">Saved!</span>
+      </div>
+
+      <!-- Tracker Logs -->
+      <div id="tracker-log-container" class="tracker-log-container" style="display:none"></div>
+      <button id="btn-toggle-tracker-logs" class="btn btn-small btn-secondary" style="margin-top:8px">Show Logs</button>
+    </div>
+
+    <!-- Progress Overlay (fixed top-right) -->
+    <div class="tracker-progress-overlay" id="tracker-progress-overlay">
+      <div class="progress-item">
+        <div class="progress-label">Item Progress</div>
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" id="trk-item-bar" style="width:0%"></div>
+          <div class="progress-text" id="trk-item-text">Item 0 of 0 (0%)</div>
+        </div>
+      </div>
+      <div class="progress-item">
+        <div class="progress-label">Page Progress</div>
+        <div class="progress-bar-track">
+          <div class="progress-bar-fill" id="trk-page-bar" style="width:0%"></div>
+          <div class="progress-text" id="trk-page-text">Page 0 of 0 (0%)</div>
+        </div>
+      </div>
+      <div class="current-item-text" id="trk-current-item">—</div>
+    </div>
+
+    <!-- ========================================= -->
+    <!-- Original Monitor UI (preserved below)     -->
+    <!-- ========================================= -->
 
     <!-- Stats Bar -->
     <div class="stats-bar">
@@ -49,12 +463,25 @@
       </div>
     </div>
 
-    <!-- Progress Bar (shown during monitor cycle) -->
+    <!-- Progress Bar (EcomSniper-inspired: shows processed/total/unprocessed + pause/resume) -->
     <div id="progress-section" class="progress-section" style="display: none;">
       <div class="progress-bar-container">
         <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
       </div>
-      <span id="progress-text" class="progress-text">Checking...</span>
+      <div class="progress-details">
+        <span id="progress-text" class="progress-text">Checking...</span>
+        <div class="progress-controls">
+          <button id="btn-pause-monitor" class="btn btn-small btn-secondary" style="display:none">Pause</button>
+          <button id="btn-resume-monitor" class="btn btn-small btn-primary" style="display:none">Resume</button>
+        </div>
+      </div>
+      <div id="progress-stats" class="progress-stats" style="display:none">
+        <span>Processed: <strong id="prog-processed">0</strong></span>
+        <span>Total: <strong id="prog-total">0</strong></span>
+        <span>Changed: <strong id="prog-changed">0</strong></span>
+        <span>Errors: <strong id="prog-errors">0</strong></span>
+        <span>Unprocessed: <strong id="prog-unprocessed">0</strong></span>
+      </div>
     </div>
 
     <!-- Tab Navigation -->
@@ -101,6 +528,35 @@
           <button id="btn-add-product" class="btn btn-primary">Add Product</button>
           <button id="btn-import-ebay" class="btn btn-secondary">Import from eBay</button>
           <button id="btn-cancel-import" class="btn btn-danger btn-small" style="display:none">Cancel Import</button>
+        </div>
+      </div>
+
+      <!-- CSV Import (EcomSniper-inspired) -->
+      <div class="card" id="csv-import-card">
+        <h2>CSV Import <span style="font-size:12px;color:#888;font-weight:normal">(EcomSniper-style)</span></h2>
+        <p style="font-size:12px;color:#888;margin-bottom:12px">
+          Import products from an eBay Active Listings CSV. Supports base64-encoded ASINs (EcomSniper format).
+          <br>Go to <em>Seller Hub → Reports → Downloads</em> to get your CSV.
+        </p>
+        <div class="csv-import-controls">
+          <input type="file" id="csv-file-input" accept=".csv,.txt" style="margin-bottom:8px">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button id="btn-open-ebay-csv" class="btn btn-small btn-secondary">Open eBay Downloads</button>
+            <button id="btn-import-csv" class="btn btn-primary" disabled>Import CSV</button>
+            <select id="csv-import-domain" style="padding:6px 10px;border-radius:4px;background:#1a1a2e;color:#fff;border:1px solid #333">
+              <option value="com.au" selected>ebay.com.au (AU)</option>
+              <option value="com">ebay.com (US)</option>
+              <option value="co.uk">ebay.co.uk (UK)</option>
+              <option value="ca">ebay.ca (CA)</option>
+              <option value="de">ebay.de (DE)</option>
+            </select>
+          </div>
+        </div>
+        <div id="csv-import-progress" style="display:none;margin-top:12px">
+          <div class="progress-bar-container">
+            <div id="csv-progress-bar" class="progress-bar" style="width:0%"></div>
+          </div>
+          <span id="csv-progress-text" class="progress-text"></span>
         </div>
       </div>
 
@@ -256,6 +712,22 @@
             <input type="number" id="set-delay" min="1000" max="30000" step="500" value="3000">
             <span class="hint">Wait time between each product check</span>
           </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Checking Method <span style="font-size:12px;color:#888;font-weight:normal">(EcomSniper-style)</span></h2>
+        <div class="checkbox-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="set-reusable-tab" checked>
+            <span>Use reusable supplier tab (recommended for concurrency=1)</span>
+          </label>
+          <span class="hint" style="margin-left:24px">Like EcomSniper: navigates a single pinned tab between products instead of opening/closing tabs. More reliable, avoids rate limits.</span>
+        </div>
+        <div class="form-group" style="margin-top:8px">
+          <label for="set-tracking-timeout">Tab Load Timeout (ms)</label>
+          <input type="number" id="set-tracking-timeout" min="10000" max="120000" step="5000" value="30000">
+          <span class="hint">How long to wait for Amazon/AliExpress page to load</span>
         </div>
       </div>
 

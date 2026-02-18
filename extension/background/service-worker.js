@@ -37,7 +37,14 @@ import {
   GET_PENDING_ORDERS, GET_ALL_ORDERS, CREATE_ORDER, UPDATE_ORDER_STATUS,
   CANCEL_ORDER, START_AUTO_ORDER, AUTO_ORDER_PROGRESS, AUTO_ORDER_READY,
   CONFIRM_ORDER_PAYMENT, GET_AUTO_ORDER_SETTINGS, SAVE_AUTO_ORDER_SETTINGS,
-  START_SALE_POLLING, STOP_SALE_POLLING, POLL_SALES_NOW, SALE_POLL_STATUS
+  START_SALE_POLLING, STOP_SALE_POLLING, POLL_SALES_NOW, SALE_POLL_STATUS,
+  DOWNLOAD_EBAY_CSV, IMPORT_CSV_PRODUCTS, CSV_IMPORT_PROGRESS, CSV_IMPORT_COMPLETE,
+  PAUSE_MONITOR, RESUME_MONITOR, MONITOR_PAUSED as MONITOR_PAUSED_MSG,
+  GET_AMAZON_DATA, AMAZON_DATA_RESULT,
+  START_TRACKING, STOP_TRACKING, RESET_TRACKING,
+  TRACKING_PROGRESS, TRACKING_LOG, TRACKING_STATUS,
+  GET_TRACKER_SETTINGS, SAVE_TRACKER_SETTINGS,
+  START_TRACKING_PAGE, TRACKING_PAGE_RESULT, UPDATE_TRACKER_POSITION
 } from '../lib/message-types.js';
 
 import {
@@ -49,7 +56,10 @@ import {
   TRACKED_PRODUCTS, MONITOR_SETTINGS, MONITOR_ALERTS,
   MONITOR_RUNNING, MONITOR_LAST_RUN, MONITOR_STATS,
   MONITOR_POSITION, MONITOR_SOFT_BLOCK,
-  AUTO_ORDERS, AUTO_ORDER_SETTINGS
+  MONITOR_PAUSED, MONITOR_SUPPLIER_TAB,
+  AUTO_ORDERS, AUTO_ORDER_SETTINGS,
+  TRACKER_SETTINGS, TRACKER_RUNNING, TRACKER_POSITION,
+  TRACKER_PAGE, TRACKER_TOTAL_PAGES, TRACKER_TAB_ID, TRACKER_LOGS
 } from '../lib/storage-keys.js';
 
 import {
@@ -164,9 +174,14 @@ let aliBulkRunning = false;
 let aliBulkPaused = false;
 let aliBulkAbort = false;
 let monitorCycleRunning = false;
+let monitorPaused = false;  // EcomSniper-inspired pause/resume
+// Map of tabId → { resolve, reject } for tab-based Amazon data retrieval (EcomSniper-style)
+const amazonDataResolvers = new Map();
 let skuBackfillRunning = false;
 let skuBackfillPaused = false;
 let skuBackfillAbort = false;
+let trackerRunning = false;
+let trackerAbort = false;
 
 const MONITOR_ALARM_NAME = 'dropflow-monitor';
 
@@ -673,6 +688,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       handleSaveMonitorSettings(payload).then(sendResponse);
       return true;
 
+    // --- Monitor Pause/Resume (EcomSniper-inspired) ---
+    case PAUSE_MONITOR:
+      monitorPaused = true;
+      chrome.storage.local.set({ [MONITOR_PAUSED]: true });
+      broadcastToExtensionPages({ type: MONITOR_PAUSED_MSG, paused: true });
+      sendResponse({ success: true, paused: true });
+      return false;
+
+    case RESUME_MONITOR:
+      monitorPaused = false;
+      chrome.storage.local.set({ [MONITOR_PAUSED]: false });
+      broadcastToExtensionPages({ type: MONITOR_PAUSED_MSG, paused: false });
+      sendResponse({ success: true, paused: false });
+      return false;
+
+    // --- CSV Import (EcomSniper-inspired) ---
+    case DOWNLOAD_EBAY_CSV:
+      handleDownloadEbayCsv(payload).then(sendResponse);
+      return true;
+
+    case IMPORT_CSV_PRODUCTS:
+      handleImportCsvProducts(payload).then(sendResponse);
+      return true;
+
+    // --- Tab-based Amazon data (EcomSniper-inspired, from content script) ---
+    case GET_AMAZON_DATA:
+      // Content script on Amazon page sends scraped data back
+      if (sender?.tab?.id) {
+        const stored = amazonDataResolvers.get(sender.tab.id);
+        if (stored) {
+          stored.resolve(payload);
+          amazonDataResolvers.delete(sender.tab.id);
+        }
+      }
+      sendResponse({ received: true });
+      return false;
+
     // --- SKU Backfiller ---
     case START_SKU_BACKFILL:
       handleStartSkuBackfill(payload).then(sendResponse);
@@ -688,6 +740,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       skuBackfillRunning = false;
       sendResponse({ success: true });
       return false;
+
+    // --- Page-Based Tracker (EcomSniper-style) ---
+    case START_TRACKING:
+      handleStartTracking().then(sendResponse);
+      return true;
+
+    case STOP_TRACKING:
+      handleStopTracking().then(sendResponse);
+      return true;
+
+    case RESET_TRACKING:
+      handleResetTracking().then(sendResponse);
+      return true;
+
+    case GET_TRACKER_SETTINGS:
+      handleGetTrackerSettings().then(sendResponse);
+      return true;
+
+    case SAVE_TRACKER_SETTINGS:
+      handleSaveTrackerSettings(payload).then(sendResponse);
+      return true;
 
     // --- Tab ID (used by content scripts to identify themselves) ---
     case 'GET_TAB_ID':
@@ -3570,20 +3643,34 @@ async function saveTrackedProducts(products) {
 }
 
 /**
+ * Simple async mutex for serialising storage writes.
+ * Prevents two concurrent checkSingleProduct calls from reading stale data.
+ */
+let _storageMutex = Promise.resolve();
+function withStorageLock(fn) {
+  const prev = _storageMutex;
+  let release;
+  _storageMutex = new Promise(r => { release = r; });
+  return prev.then(fn).finally(release);
+}
+
+/**
  * Atomic read-modify-write for a single product.
- * Minimises the window between read and write to avoid race conditions
- * when multiple concurrent checks run via the semaphore.
+ * Uses a mutex to serialise storage access — prevents concurrent
+ * checkSingleProduct calls from overwriting each other's changes.
  * @param {string} productId
  * @param {function} updateFn - receives product object, mutate in-place
  * @returns {object|null} the updated product, or null if not found
  */
 async function atomicUpdateProduct(productId, updateFn) {
-  const products = await getTrackedProducts();
-  const idx = products.findIndex(p => p.id === productId);
-  if (idx === -1) return null;
-  updateFn(products[idx]);
-  await saveTrackedProducts(products);
-  return products[idx];
+  return withStorageLock(async () => {
+    const products = await getTrackedProducts();
+    const idx = products.findIndex(p => p.id === productId);
+    if (idx === -1) return null;
+    updateFn(products[idx]);
+    await saveTrackedProducts(products);
+    return products[idx];
+  });
 }
 
 async function getMonitorAlerts() {
@@ -3891,6 +3978,315 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   await runMonitorCycle();
 });
 
+// ============================
+// CSV Import from eBay (EcomSniper-inspired)
+// ============================
+// EcomSniper downloads active listings CSV from eBay's Seller Hub.
+// The CSV contains customLabel (SKU) fields with base64-encoded ASINs.
+// We open the eBay reports/downloads page in a tab to trigger the download.
+
+/**
+ * Decode a Custom Label that may be base64-encoded (EcomSniper format).
+ * EcomSniper stores ASINs as base64 in eBay's customLabel field.
+ * Returns the decoded ASIN if valid, otherwise the original label.
+ */
+function decodeCustomLabel(label) {
+  if (!label || typeof label !== 'string') return label;
+  const trimmed = label.trim();
+
+  // If it already looks like an ASIN (B0XXXXXXXXX or 10-char alphanumeric), return as-is
+  if (/^B0[A-Z0-9]{8}$/i.test(trimmed)) return trimmed;
+  if (/^[A-Z0-9]{10}$/i.test(trimmed) && /[A-Z]/i.test(trimmed)) return trimmed;
+  // If it looks like an AliExpress ID (10+ digits), return as-is
+  if (/^\d{10,}$/.test(trimmed)) return trimmed;
+
+  // Try base64 decoding (EcomSniper encodes ASINs this way)
+  try {
+    const decoded = atob(trimmed);
+    // Check if decoded result looks like an ASIN
+    if (/^B0[A-Z0-9]{8}$/i.test(decoded)) return decoded;
+    if (/^[A-Z0-9]{10}$/i.test(decoded) && /[A-Z]/i.test(decoded)) return decoded;
+    if (/^\d{10,}$/.test(decoded)) return decoded;
+  } catch (_) {
+    // Not valid base64 — that's fine
+  }
+
+  return trimmed;
+}
+
+/**
+ * Open eBay's reports/downloads page to trigger CSV download.
+ * EcomSniper uses this to get the active listings CSV.
+ */
+async function handleDownloadEbayCsv(payload) {
+  const domain = payload?.domain || 'com.au';
+  const url = `https://www.ebay.${domain}/sh/reports/downloads`;
+
+  try {
+    const tab = await createTabAndWait(url, 30000);
+    // The content script on the downloads page will handle the actual CSV download
+    // For now, just open the page so the user can click "Download"
+    return { success: true, tabId: tab.id, message: 'Opened eBay reports page. Download your Active Listings CSV.' };
+  } catch (e) {
+    return { error: 'Failed to open eBay reports page: ' + e.message };
+  }
+}
+
+/**
+ * Import products from a parsed CSV file.
+ * Handles both standard eBay CSV format and EcomSniper's base64-encoded SKUs.
+ */
+async function handleImportCsvProducts(payload) {
+  const { rows, domain = 'com.au' } = payload;
+  if (!rows || !Array.isArray(rows) || rows.length === 0) {
+    return { error: 'No CSV rows provided' };
+  }
+
+  const products = await getTrackedProducts();
+  let added = 0, updated = 0, skipped = 0;
+
+  for (const row of rows) {
+    const itemId = row.itemId || row['Item number'] || row['Item ID'] || '';
+    const title = row.title || row['Title'] || row['Item title'] || '';
+    const price = parseFloat(row.price || row['Price'] || row['Current price'] || 0);
+    let customLabel = row.customLabel || row['Custom label'] || row['Custom Label'] || row['SKU'] || '';
+
+    if (!itemId) { skipped++; continue; }
+
+    // Decode base64 SKUs (EcomSniper format)
+    customLabel = decodeCustomLabel(customLabel);
+
+    const existing = products.find(p => p.ebayItemId === String(itemId));
+
+    // Build source URL from decoded custom label
+    const EBAY_TO_AMZ = { 'com': 'www.amazon.com', 'ca': 'www.amazon.ca', 'co.uk': 'www.amazon.co.uk',
+      'com.au': 'www.amazon.com.au', 'de': 'www.amazon.de', 'fr': 'www.amazon.fr',
+      'it': 'www.amazon.it', 'es': 'www.amazon.es', 'nl': 'www.amazon.nl' };
+    const amazonDomain = EBAY_TO_AMZ[domain] || 'www.amazon.com.au';
+    let sourceUrl = '', sourceType = '', sourceId = '', sourceDomain = '';
+
+    if (customLabel) {
+      if (/^\d{10,}$/.test(customLabel)) {
+        sourceUrl = `https://www.aliexpress.com/item/${customLabel}.html`;
+        sourceType = 'aliexpress';
+        sourceId = customLabel;
+        sourceDomain = 'aliexpress';
+      } else if (/^[A-Z0-9]{10}$/i.test(customLabel)) {
+        sourceUrl = `https://${amazonDomain}/dp/${customLabel.toUpperCase()}`;
+        sourceType = 'amazon';
+        sourceId = customLabel.toUpperCase();
+        sourceDomain = domain;
+      }
+    }
+
+    if (existing) {
+      const updates = {};
+      if (title && title !== existing.ebayTitle) updates.ebayTitle = title;
+      if (price > 0 && price !== existing.ebayPrice) updates.ebayPrice = price;
+      if (!existing.sourceUrl && sourceUrl) {
+        updates.sourceUrl = sourceUrl;
+        updates.sourceType = sourceType;
+        updates.sourceId = sourceId;
+        updates.sourceDomain = sourceDomain;
+      }
+      if (Object.keys(updates).length > 0) {
+        Object.assign(existing, updates);
+        updated++;
+      }
+    } else {
+      products.push({
+        id: uid(),
+        sourceType: sourceType || 'amazon',
+        sourceUrl,
+        sourceId,
+        sourceDomain,
+        ebayItemId: String(itemId),
+        ebayDomain: domain,
+        ebayTitle: title,
+        ebayPrice: price,
+        ebayCurrency: domain === 'com.au' ? 'AUD' : 'USD',
+        sourcePrice: 0,
+        sourceCurrency: domain === 'com.au' ? 'AUD' : 'USD',
+        sourceInStock: null,
+        sourceQuantity: null,
+        lastChecked: null,
+        lastChanged: null,
+        status: 'active',
+        errorMessage: null,
+        addedAt: new Date().toISOString(),
+        checkCount: 0,
+        changeCount: 0
+      });
+      added++;
+    }
+
+    // Broadcast progress every 50 items
+    if ((added + updated + skipped) % 50 === 0) {
+      broadcastToExtensionPages({
+        type: CSV_IMPORT_PROGRESS,
+        processed: added + updated + skipped,
+        total: rows.length,
+        added, updated, skipped
+      });
+    }
+  }
+
+  await saveTrackedProducts(products);
+
+  broadcastToExtensionPages({
+    type: CSV_IMPORT_COMPLETE,
+    total: rows.length, added, updated, skipped
+  });
+
+  return { success: true, added, updated, skipped, total: rows.length };
+}
+
+// ============================
+// Tab-Based Amazon Checking (EcomSniper-inspired)
+// ============================
+// EcomSniper uses a single reusable background tab for Amazon checks.
+// It navigates the tab to each product URL, sends a message to the content
+// script to scrape data, and waits for the response. This is more reliable
+// than HTTP fetch because it renders JS and handles bot detection naturally.
+
+/**
+ * Get or create the reusable supplier tracking tab (EcomSniper: supplierTrackingTabId).
+ * Returns the tab object, creating a new one if the stored one is gone.
+ */
+async function getOrCreateSupplierTab(url) {
+  const stored = (await chrome.storage.local.get(MONITOR_SUPPLIER_TAB))[MONITOR_SUPPLIER_TAB];
+
+  if (stored) {
+    try {
+      const tab = await chrome.tabs.get(stored);
+      if (tab) {
+        // Reuse existing tab — navigate it to new URL
+        await chrome.tabs.update(tab.id, { url, active: false });
+        return tab;
+      }
+    } catch (_) {
+      // Tab no longer exists
+    }
+  }
+
+  // Create new tab
+  const tab = await new Promise((resolve) => {
+    chrome.tabs.create({ url, active: false, pinned: true }, resolve);
+  });
+  await chrome.storage.local.set({ [MONITOR_SUPPLIER_TAB]: tab.id });
+  return tab;
+}
+
+/**
+ * Check an Amazon product using a reusable background tab (EcomSniper approach).
+ * Opens the product page in the supplier tab, waits for the content script
+ * to scrape and send back data via GET_AMAZON_DATA message.
+ *
+ * Returns: { price, inStock, isIpBlocked, hasNetworkError, sku, ... }
+ */
+async function checkAmazonViaTab(product, timeoutMs = 30000) {
+  const url = product.sourceUrl.includes('?')
+    ? product.sourceUrl + '&th=1&psc=1'
+    : product.sourceUrl + '?th=1&psc=1';
+
+  const tab = await getOrCreateSupplierTab(url);
+
+  // Wait for tab to finish loading
+  await new Promise((resolve) => {
+    const listener = (tabId, changeInfo) => {
+      if (tabId === tab.id && changeInfo.status === 'complete') {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); resolve(); }, timeoutMs);
+  });
+
+  await sleep(2000);
+
+  // Check for interstitial/CAPTCHA
+  const interstitial = await handleAmazonInterstitial(tab.id);
+  if (interstitial === 'blocked') {
+    return { softBlock: true };
+  }
+  if (interstitial === 'clicked') {
+    await new Promise((resolve) => {
+      const listener = (tabId, changeInfo) => {
+        if (tabId === tab.id && changeInfo.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve();
+        }
+      };
+      chrome.tabs.onUpdated.addListener(listener);
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); resolve(); }, 15000);
+    });
+    await sleep(3000);
+  } else {
+    await sleep(2000);
+  }
+
+  // Scrape via content script (same as existing checkAmazonProduct)
+  let data;
+  try {
+    data = await chrome.tabs.sendMessage(tab.id, { type: SCRAPE_AMAZON_PRODUCT });
+  } catch (err) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content-scripts/amazon/availability.js', 'content-scripts/amazon/product-scraper.js']
+      });
+      await sleep(1500);
+      data = await chrome.tabs.sendMessage(tab.id, { type: SCRAPE_AMAZON_PRODUCT });
+    } catch (injErr) {
+      return { error: true, message: 'Content script injection failed: ' + injErr.message };
+    }
+  }
+
+  if (!data || data.error) {
+    try {
+      const tabInfo = await chrome.tabs.get(tab.id);
+      if (tabInfo.title && /sorry/i.test(tabInfo.title)) {
+        return { softBlock: true };
+      }
+    } catch (_) {}
+    return { notFound: true };
+  }
+
+  if (!data.title && !data.price) return { notFound: true };
+
+  // Retry if title found but no price
+  if (data.title && !data.price) {
+    await sleep(4000);
+    const retry = await chrome.tabs.sendMessage(tab.id, { type: SCRAPE_AMAZON_PRODUCT }).catch(() => null);
+    if (retry && (retry.price || retry.availability?.inStock)) data = retry;
+  }
+
+  // === EcomSniper-style validation ===
+  const inStock = data.availability?.inStock ?? false;
+  const scrapedAsin = data.asin || '';
+  const expectedAsin = product.sourceId || '';
+
+  // SKU mismatch detection (EcomSniper checks this)
+  if (scrapedAsin && expectedAsin && scrapedAsin !== expectedAsin) {
+    console.warn(`[DropFlow Monitor] SKU mismatch: expected ${expectedAsin}, got ${scrapedAsin}`);
+    return {
+      error: true,
+      message: `SKU mismatch: expected ${expectedAsin}, got ${scrapedAsin}`,
+      skuMismatch: true
+    };
+  }
+
+  return {
+    price: data.price || 0,
+    currency: data.currency || 'USD',
+    inStock,
+    quantity: data.availability?.quantity ?? null,
+    brand: data.brand || '',
+    asin: scrapedAsin
+  };
+}
+
 // --- Main Monitor Cycle ---
 
 async function runMonitorCycle() {
@@ -3946,6 +4342,16 @@ async function runMonitorCycle() {
       // Check if monitor was stopped mid-cycle
       const stillRunning = (await chrome.storage.local.get(MONITOR_RUNNING))[MONITOR_RUNNING];
       if (!stillRunning) return;
+
+      // EcomSniper-inspired pause/resume: wait while paused
+      while (monitorPaused) {
+        const isPaused = (await chrome.storage.local.get(MONITOR_PAUSED))[MONITOR_PAUSED];
+        if (!isPaused) { monitorPaused = false; break; }
+        await sleep(1000);
+        // Also check if stopped while paused
+        const sr = (await chrome.storage.local.get(MONITOR_RUNNING))[MONITOR_RUNNING];
+        if (!sr) return;
+      }
 
       const result = await checkSingleProduct(product, settings);
       if (result.skipped) {
@@ -4072,12 +4478,25 @@ async function checkSingleProduct(product, settings) {
     }
   }
 
+  // Auto-disable after too many consecutive errors (avoids wasting cycles on dead products)
+  const MAX_CONSECUTIVE_ERRORS = 10;
+  if (product._consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+    console.warn(`[DropFlow Monitor] Skipping ${product.sourceId}: ${product._consecutiveErrors} consecutive errors — auto-disabled`);
+    return { skipped: true, message: `Auto-disabled after ${MAX_CONSECUTIVE_ERRORS} consecutive errors` };
+  }
+
   let supplierData;
   try {
     if (product.sourceType === 'aliexpress') {
       supplierData = await checkAliExpressProduct(product);
     } else {
-      supplierData = await checkAmazonProduct(product);
+      // EcomSniper-inspired: use reusable tab when concurrency is 1
+      // (single-tab mode is more reliable and avoids rate limits)
+      if ((settings.concurrency || 2) <= 1 && settings.useReusableTab !== false) {
+        supplierData = await checkAmazonViaTab(product, settings.trackingTimeout || 30000);
+      } else {
+        supplierData = await checkAmazonProduct(product);
+      }
     }
   } catch (err) {
     console.error(`[DropFlow Monitor] Error checking ${product.sourceId}:`, err);
@@ -4086,6 +4505,7 @@ async function checkSingleProduct(product, settings) {
       p.errorMessage = err.message || 'Check failed';
       p.lastChecked = new Date().toISOString();
       p.checkCount++;
+      p._consecutiveErrors = (p._consecutiveErrors || 0) + 1;
     });
     return { error: true, message: err.message };
   }
@@ -4239,6 +4659,7 @@ async function checkSingleProduct(product, settings) {
     }
     p.status = 'active';
     p.errorMessage = null;
+    p._consecutiveErrors = 0;
   });
 
   if (!updated) {
@@ -5184,5 +5605,531 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     console.warn('[DropFlow] SW startup recovery error:', e.message);
   }
 })();
+
+// ============================
+// Page-Based Tracker (EcomSniper-style)
+// ============================
+
+async function getTrackerSettings() {
+  const result = await chrome.storage.local.get(TRACKER_SETTINGS);
+  return result[TRACKER_SETTINGS] || DEFAULTS[TRACKER_SETTINGS];
+}
+
+async function handleGetTrackerSettings() {
+  const settings = await getTrackerSettings();
+  const running = (await chrome.storage.local.get(TRACKER_RUNNING))[TRACKER_RUNNING] || false;
+  const position = (await chrome.storage.local.get(TRACKER_POSITION))[TRACKER_POSITION] || 1;
+  const page = (await chrome.storage.local.get(TRACKER_PAGE))[TRACKER_PAGE] || 1;
+  const totalPages = (await chrome.storage.local.get(TRACKER_TOTAL_PAGES))[TRACKER_TOTAL_PAGES] || 1;
+  const logs = (await chrome.storage.local.get(TRACKER_LOGS))[TRACKER_LOGS] || [];
+  return { success: true, settings, running, position, page, totalPages, logs };
+}
+
+async function handleSaveTrackerSettings(payload) {
+  const { settings } = payload;
+  await chrome.storage.local.set({ [TRACKER_SETTINGS]: settings });
+  return { success: true };
+}
+
+async function handleResetTracking() {
+  await chrome.storage.local.set({
+    [TRACKER_POSITION]: 1,
+    [TRACKER_PAGE]: 1,
+    [TRACKER_TOTAL_PAGES]: 1
+  });
+  broadcastToExtensionPages({ type: TRACKING_PROGRESS, position: 1, page: 1, totalPages: 1, totalOnPage: 0, status: 'reset' });
+  return { success: true };
+}
+
+async function handleStopTracking() {
+  trackerAbort = true;
+  trackerRunning = false;
+  await chrome.storage.local.set({ [TRACKER_RUNNING]: false });
+  broadcastToExtensionPages({ type: TRACKING_STATUS, running: false });
+  return { success: true };
+}
+
+function trackerLog(message, level = 'info') {
+  const entry = { timestamp: new Date().toISOString(), message, level };
+  broadcastToExtensionPages({ type: TRACKING_LOG, entry });
+  console.log(`[DropFlow Tracker] ${message}`);
+  // Async append to stored logs (fire-and-forget)
+  chrome.storage.local.get(TRACKER_LOGS).then(data => {
+    const logs = data[TRACKER_LOGS] || [];
+    logs.push(entry);
+    if (logs.length > 2000) logs.splice(0, logs.length - 2000);
+    chrome.storage.local.set({ [TRACKER_LOGS]: logs });
+  }).catch(() => {});
+}
+
+async function handleStartTracking() {
+  if (trackerRunning) {
+    return { error: 'Tracker already running' };
+  }
+
+  const settings = await getTrackerSettings();
+
+  if (!settings.enableStockMonitor && !settings.enablePriceMonitor) {
+    return { error: 'Enable at least one filter (Stock Monitor or Price Monitor)' };
+  }
+
+  trackerRunning = true;
+  trackerAbort = false;
+  await chrome.storage.local.set({ [TRACKER_RUNNING]: true });
+  broadcastToExtensionPages({ type: TRACKING_STATUS, running: true });
+  startSWKeepAlive();
+
+  // Run in background
+  runTrackerFlow(settings).catch(err => {
+    console.error('[DropFlow Tracker] Flow crashed:', err);
+    trackerLog('Tracker crashed: ' + err.message, 'error');
+  }).finally(() => {
+    trackerRunning = false;
+    trackerAbort = false;
+    chrome.storage.local.set({ [TRACKER_RUNNING]: false });
+    broadcastToExtensionPages({ type: TRACKING_STATUS, running: false });
+    stopSWKeepAlive();
+  });
+
+  return { success: true };
+}
+
+/**
+ * Main tracker flow — EcomSniper-style page iteration.
+ * Opens eBay active listings sorted by SKU, iterates each row,
+ * checks Amazon via reusable supplier tab, applies rules.
+ */
+async function runTrackerFlow(settings) {
+  const ebayDomain = settings.ebayDomain || 'com.au';
+  const amazonDomain = settings.amazonDomain || 'com.au';
+  const itemsPerPage = settings.itemsPerPage || 200;
+  const timeoutMs = (settings.trackingTimeout || 60) * 1000;
+
+  // Resume from saved position
+  let currentPage = (await chrome.storage.local.get(TRACKER_PAGE))[TRACKER_PAGE] || 1;
+  let startPosition = (await chrome.storage.local.get(TRACKER_POSITION))[TRACKER_POSITION] || 1;
+
+  trackerLog(`Starting tracker: page ${currentPage}, position ${startPosition}, domain ${ebayDomain}`);
+
+  do {
+    if (trackerAbort) break;
+
+    // Build URL
+    const offset = (currentPage - 1) * itemsPerPage;
+    const url = `https://www.ebay.${ebayDomain}/sh/lst/active?offset=${offset}&limit=${itemsPerPage}&sort=listingSKU`;
+
+    trackerLog(`Opening page ${currentPage}: ${url}`);
+
+    // Get or create tracker tab
+    let trackerTabId;
+    const storedTabId = (await chrome.storage.local.get(TRACKER_TAB_ID))[TRACKER_TAB_ID];
+    
+    if (storedTabId) {
+      try {
+        await chrome.tabs.get(storedTabId);
+        await chrome.tabs.update(storedTabId, { url, active: false });
+        trackerTabId = storedTabId;
+      } catch (_) {
+        trackerTabId = null;
+      }
+    }
+    
+    if (!trackerTabId) {
+      const tab = await new Promise(resolve => {
+        chrome.tabs.create({ url, active: false, pinned: settings.pinTabs }, resolve);
+      });
+      trackerTabId = tab.id;
+      await chrome.storage.local.set({ [TRACKER_TAB_ID]: trackerTabId });
+    }
+
+    // Wait for page to load
+    await new Promise((resolve) => {
+      const listener = (tabId, changeInfo) => {
+        if (tabId === trackerTabId && changeInfo.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve();
+        }
+      };
+      chrome.tabs.onUpdated.addListener(listener);
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); resolve(); }, timeoutMs);
+    });
+
+    await sleep(3000);
+
+    // Inject tracker content script
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: trackerTabId },
+        files: ['content-scripts/ebay/seller-hub-tracker.js']
+      });
+    } catch (_) {}
+    await sleep(1000);
+
+    // Send START_TRACKING_PAGE to content script
+    let pageResult;
+    try {
+      pageResult = await Promise.race([
+        chrome.tabs.sendMessage(trackerTabId, { type: 'START_TRACKING_PAGE' }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('Page scrape timed out')), timeoutMs))
+      ]);
+    } catch (e) {
+      trackerLog(`Page ${currentPage} failed: ${e.message}`, 'error');
+      // Retry once
+      await sleep(5000);
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: trackerTabId },
+          files: ['content-scripts/ebay/seller-hub-tracker.js']
+        });
+        await sleep(2000);
+        pageResult = await Promise.race([
+          chrome.tabs.sendMessage(trackerTabId, { type: 'START_TRACKING_PAGE' }),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('Page scrape retry timed out')), timeoutMs))
+        ]);
+      } catch (e2) {
+        trackerLog(`Page ${currentPage} retry failed: ${e2.message} — skipping`, 'error');
+        currentPage++;
+        startPosition = 1;
+        await chrome.storage.local.set({ [TRACKER_PAGE]: currentPage, [TRACKER_POSITION]: 1 });
+        continue;
+      }
+    }
+
+    if (!pageResult?.isPageOpenedCorrectly) {
+      trackerLog(`Page ${currentPage} did not load correctly: ${pageResult?.error || 'unknown'}`, 'error');
+      // Wait and retry
+      await sleep(5000);
+      currentPage++;
+      startPosition = 1;
+      await chrome.storage.local.set({ [TRACKER_PAGE]: currentPage, [TRACKER_POSITION]: 1 });
+      continue;
+    }
+
+    const totalPages = pageResult.pagination?.totalPages || 1;
+    await chrome.storage.local.set({ [TRACKER_TOTAL_PAGES]: totalPages });
+
+    const items = pageResult.items || [];
+    trackerLog(`Page ${currentPage}/${totalPages}: ${items.length} items found`);
+
+    broadcastToExtensionPages({
+      type: TRACKING_PROGRESS,
+      page: currentPage,
+      totalPages,
+      position: 0,
+      totalOnPage: items.length,
+      status: 'processing'
+    });
+
+    // Process each item on this page
+    for (let i = (startPosition > 1 ? startPosition - 1 : 0); i < items.length; i++) {
+      if (trackerAbort) break;
+
+      const item = items[i];
+      const position = i + 1;
+
+      // Save position for resume
+      await chrome.storage.local.set({ [TRACKER_POSITION]: position, [TRACKER_PAGE]: currentPage });
+
+      broadcastToExtensionPages({
+        type: TRACKING_PROGRESS,
+        page: currentPage,
+        totalPages,
+        position,
+        totalOnPage: items.length,
+        itemTitle: item.title?.substring(0, 60),
+        itemId: item.itemId,
+        status: 'checking'
+      });
+
+      // Apply pruning rules first
+      if (await applyPruningRules(item, settings)) {
+        continue; // Item was pruned, skip to next
+      }
+
+      // No valid SKU → can't check supplier
+      if (!item.asin || !item.skuValid) {
+        if (settings.logData) trackerLog(`  #${position} ${item.itemId}: No valid SKU — skipped`);
+        continue;
+      }
+
+      // Check supplier (Amazon) via reusable tab
+      try {
+        const amazonResult = await checkSupplierForTrackerItem(item, settings, amazonDomain, timeoutMs);
+        
+        if (amazonResult.softBlock) {
+          trackerLog('Amazon rate limit detected — waiting 120s', 'warn');
+          await sleep(120000);
+          continue;
+        }
+
+        // Apply stock monitor rules
+        if (settings.enableStockMonitor && !amazonResult.error) {
+          await applyStockRules(item, amazonResult, settings);
+        }
+
+        // Apply price monitor rules
+        if (settings.enablePriceMonitor && !amazonResult.error && amazonResult.price > 0) {
+          await applyPriceRules(item, amazonResult, settings);
+        }
+
+        if (settings.logData) {
+          const status = amazonResult.error ? 'ERROR' : (amazonResult.inStock ? 'IN_STOCK' : 'OOS');
+          trackerLog(`  #${position} ${item.itemId}: ${status} | Amazon $${amazonResult.price || 0} | eBay $${item.price}`);
+        }
+      } catch (err) {
+        trackerLog(`  #${position} ${item.itemId}: Check failed — ${err.message}`, 'error');
+      }
+
+      // Brief delay between items
+      await sleep(2000);
+    }
+
+    // Page complete — move to next
+    startPosition = 1;
+    currentPage++;
+    await chrome.storage.local.set({ [TRACKER_PAGE]: currentPage, [TRACKER_POSITION]: 1 });
+
+    // Check if we've reached the last page
+    if (currentPage > totalPages) {
+      if (settings.continuousTracking && !trackerAbort) {
+        trackerLog('All pages complete — looping back to page 1 (continuous tracking)');
+        currentPage = 1;
+        await chrome.storage.local.set({ [TRACKER_PAGE]: 1 });
+      } else {
+        trackerLog('All pages complete — tracker finished');
+        break;
+      }
+    }
+
+    // Brief delay between pages
+    await sleep(3000);
+  } while (!trackerAbort);
+
+  // Close tracker tab if not keeping it
+  if (!settings.keepEbayPageOpen) {
+    const tabId = (await chrome.storage.local.get(TRACKER_TAB_ID))[TRACKER_TAB_ID];
+    if (tabId) {
+      try { await chrome.tabs.remove(tabId); } catch (_) {}
+      await chrome.storage.local.remove(TRACKER_TAB_ID);
+    }
+  }
+
+  trackerLog('Tracker stopped');
+}
+
+/**
+ * Check a single item's supplier via the reusable supplier tab
+ */
+async function checkSupplierForTrackerItem(item, settings, amazonDomain, timeoutMs) {
+  const asin = item.asin;
+  const isAli = /^\d{10,}$/.test(asin);
+  
+  let url;
+  if (isAli) {
+    url = `https://www.aliexpress.com/item/${asin}.html`;
+  } else {
+    url = `https://www.amazon.${amazonDomain}/dp/${asin}?th=1&psc=1`;
+  }
+
+  // Use the existing reusable supplier tab infrastructure
+  const tab = await getOrCreateSupplierTab(url);
+
+  // Wait for load
+  await new Promise((resolve) => {
+    const listener = (tabId, changeInfo) => {
+      if (tabId === tab.id && changeInfo.status === 'complete') {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); resolve(); }, timeoutMs);
+  });
+
+  await sleep(2000);
+
+  if (isAli) {
+    // AliExpress: use MAIN world extraction
+    const mainData = await scrapeAliExpressMainWorld(tab.id);
+    if (mainData && mainData.price > 0) {
+      return { price: mainData.price, inStock: mainData.inStock ?? true, quantity: mainData.quantity };
+    }
+    return { error: true, message: 'AliExpress scrape failed' };
+  }
+
+  // Amazon: check interstitial, then scrape
+  const interstitial = await handleAmazonInterstitial(tab.id);
+  if (interstitial === 'blocked') return { softBlock: true };
+  if (interstitial === 'clicked') {
+    await new Promise((resolve) => {
+      const listener = (tabId, changeInfo) => {
+        if (tabId === tab.id && changeInfo.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve();
+        }
+      };
+      chrome.tabs.onUpdated.addListener(listener);
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); resolve(); }, 15000);
+    });
+    await sleep(3000);
+  } else {
+    await sleep(2000);
+  }
+
+  let data;
+  try {
+    data = await chrome.tabs.sendMessage(tab.id, { type: SCRAPE_AMAZON_PRODUCT });
+  } catch (err) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content-scripts/amazon/availability.js', 'content-scripts/amazon/product-scraper.js']
+      });
+      await sleep(1500);
+      data = await chrome.tabs.sendMessage(tab.id, { type: SCRAPE_AMAZON_PRODUCT });
+    } catch (_) {
+      return { error: true, message: 'Content script failed' };
+    }
+  }
+
+  if (!data || data.error || (!data.title && !data.price)) {
+    try {
+      const tabInfo = await chrome.tabs.get(tab.id);
+      if (tabInfo.title && /sorry/i.test(tabInfo.title)) return { softBlock: true };
+    } catch (_) {}
+    return { notFound: true, error: true, message: 'Product not found on Amazon' };
+  }
+
+  const inStock = data.availability?.inStock ?? false;
+  const scrapedAsin = data.asin || '';
+
+  // SKU mismatch check
+  if (scrapedAsin && item.asin && scrapedAsin.toUpperCase() !== item.asin.toUpperCase()) {
+    return { error: true, skuMismatch: true, message: `SKU mismatch: expected ${item.asin}, got ${scrapedAsin}` };
+  }
+
+  // Prime filter
+  if (settings.primeFilter === 'prime_only' && !data.isFBA) {
+    return { price: data.price || 0, inStock, notPrime: true };
+  }
+
+  return {
+    price: data.price || 0,
+    inStock,
+    quantity: data.availability?.quantity ?? null,
+    asin: scrapedAsin
+  };
+}
+
+/**
+ * Apply pruning rules to an item
+ * Returns true if item was pruned (should be skipped)
+ */
+async function applyPruningRules(item, settings) {
+  // No SKU
+  if (settings.pruneNoSku && (!item.customLabel || item.customLabel.trim() === '')) {
+    trackerLog(`  #${item.position} ${item.itemId}: PRUNED — no SKU`);
+    if (settings.pruneNoSkuAction === 'delete') {
+      await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: settings.ebayDomain || 'com.au' }, { action: 'end_listing' });
+    } else {
+      await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: settings.ebayDomain || 'com.au' }, { action: 'set_quantity', quantity: 0 });
+    }
+    return true;
+  }
+
+  // Broken SKU (base64 decode fails)
+  if (settings.pruneBrokenSku && item.customLabel && !item.skuValid) {
+    trackerLog(`  #${item.position} ${item.itemId}: PRUNED — broken SKU "${item.customLabel}"`);
+    if (settings.pruneBrokenSkuAction === 'delete') {
+      await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: settings.ebayDomain || 'com.au' }, { action: 'end_listing' });
+    } else {
+      await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: settings.ebayDomain || 'com.au' }, { action: 'set_quantity', quantity: 0 });
+    }
+    return true;
+  }
+
+  // No sales pruning
+  if (settings.pruneNoSales && item.sold !== undefined) {
+    if (item.sold <= settings.pruneNoSalesCount) {
+      // TODO: Check date-based sales filtering (requires additional data)
+      // For now, just check sold count
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Apply stock monitor rules
+ */
+async function applyStockRules(item, amazonResult, settings) {
+  const domain = settings.ebayDomain || 'com.au';
+
+  if (amazonResult.notFound) {
+    if (settings.pruneNotFound) {
+      trackerLog(`  #${item.position} ${item.itemId}: NOT FOUND on Amazon — ${settings.pruneNotFoundAction === 'delete' ? 'ending' : 'setting OOS'}`);
+      if (settings.pruneNotFoundAction === 'delete') {
+        await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: domain }, { action: 'end_listing' });
+      } else {
+        await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: domain }, { action: 'set_quantity', quantity: 0 });
+      }
+    }
+    return;
+  }
+
+  if (amazonResult.skuMismatch) {
+    if (settings.pruneSkuChanged) {
+      trackerLog(`  #${item.position} ${item.itemId}: SKU CHANGED — ${settings.pruneSkuChangedAction === 'delete' ? 'ending' : 'setting OOS'}`);
+      if (settings.pruneSkuChangedAction === 'delete') {
+        await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: domain }, { action: 'end_listing' });
+      } else {
+        await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: domain }, { action: 'set_quantity', quantity: 0 });
+      }
+    }
+    return;
+  }
+
+  if (!amazonResult.inStock) {
+    // Out of stock on Amazon → set eBay qty to 0
+    trackerLog(`  #${item.position} ${item.itemId}: OOS on Amazon → setting eBay qty to 0`);
+    await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: domain }, { action: 'set_quantity', quantity: 0 });
+  } else if (item.quantity === 0 || settings.forceRestock) {
+    // In stock + currently OOS on eBay (or force restock) → restock
+    const qty = settings.forceRestock ? (settings.forceRestockQty || 1) : (settings.restockQuantity || 1);
+    trackerLog(`  #${item.position} ${item.itemId}: Restocking to ${qty}`);
+    await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: domain }, { action: 'set_quantity', quantity: qty });
+  }
+}
+
+/**
+ * Apply price monitor rules
+ */
+async function applyPriceRules(item, amazonResult, settings) {
+  const domain = settings.ebayDomain || 'com.au';
+
+  // Price ending filter
+  if (settings.priceEndingFilter) {
+    const endings = settings.priceEndingFilter.split(',').map(e => e.trim());
+    const priceStr = item.price.toFixed(2);
+    const ending = priceStr.slice(-2);
+    if (endings.length > 0 && !endings.includes(ending)) {
+      return; // Skip this item — price ending doesn't match filter
+    }
+  }
+
+  // Calculate new eBay price
+  const amazonPrice = amazonResult.price;
+  const markupPct = settings.markupPercentage || 100;
+  const newEbayPrice = +(amazonPrice * (1 + markupPct / 100)).toFixed(2);
+
+  // Check threshold
+  const priceDiff = Math.abs(newEbayPrice - item.price);
+  const threshold = settings.priceTriggerThreshold || 2;
+
+  if (priceDiff >= threshold) {
+    trackerLog(`  #${item.position} ${item.itemId}: Price change: eBay $${item.price} → $${newEbayPrice} (Amazon $${amazonPrice}, markup ${markupPct}%)`);
+    await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: domain }, { action: 'set_price', price: newEbayPrice });
+  }
+}
 
 console.log('[DropFlow] Service worker loaded');

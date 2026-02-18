@@ -5,7 +5,12 @@ import {
   GET_MONITOR_SETTINGS, SAVE_MONITOR_SETTINGS,
   SCRAPE_ACTIVE_LISTINGS,
   START_SKU_BACKFILL, PAUSE_SKU_BACKFILL, TERMINATE_SKU_BACKFILL,
-  SKU_BACKFILL_PROGRESS, SKU_BACKFILL_COMPLETE
+  SKU_BACKFILL_PROGRESS, SKU_BACKFILL_COMPLETE,
+  DOWNLOAD_EBAY_CSV, IMPORT_CSV_PRODUCTS, CSV_IMPORT_PROGRESS, CSV_IMPORT_COMPLETE,
+  PAUSE_MONITOR, RESUME_MONITOR, MONITOR_PAUSED,
+  START_TRACKING, STOP_TRACKING, RESET_TRACKING,
+  TRACKING_PROGRESS, TRACKING_LOG, TRACKING_STATUS,
+  GET_TRACKER_SETTINGS, SAVE_TRACKER_SETTINGS
 } from '../../lib/message-types.js';
 
 import { DEFAULTS, MONITOR_SETTINGS, MONITOR_ALERTS } from '../../lib/storage-keys.js';
@@ -158,6 +163,40 @@ function setupEventListeners() {
     resetBackfillUI();
   });
 
+  // --- Pause/Resume Monitor (EcomSniper-inspired) ---
+  $('#btn-pause-monitor').addEventListener('click', async () => {
+    await sendMsg(PAUSE_MONITOR);
+    $('#btn-pause-monitor').style.display = 'none';
+    $('#btn-resume-monitor').style.display = '';
+    log('Monitor paused');
+  });
+  $('#btn-resume-monitor').addEventListener('click', async () => {
+    await sendMsg(RESUME_MONITOR);
+    $('#btn-resume-monitor').style.display = 'none';
+    $('#btn-pause-monitor').style.display = '';
+    log('Monitor resumed');
+  });
+
+  // --- CSV Import (EcomSniper-inspired) ---
+  const csvFileInput = $('#csv-file-input');
+  const csvImportBtn = $('#btn-import-csv');
+  if (csvFileInput) {
+    csvFileInput.addEventListener('change', () => {
+      csvImportBtn.disabled = !csvFileInput.files.length;
+    });
+  }
+  if (csvImportBtn) {
+    csvImportBtn.addEventListener('click', handleCsvImport);
+  }
+  const openEbayCsvBtn = $('#btn-open-ebay-csv');
+  if (openEbayCsvBtn) {
+    openEbayCsvBtn.addEventListener('click', () => {
+      const domain = $('#csv-import-domain')?.value || 'com.au';
+      sendMsg(DOWNLOAD_EBAY_CSV, { domain });
+      log('Opening eBay reports page...');
+    });
+  }
+
   // Bulk link (local only)
   const bulkLinkBtn = $('#btn-apply-bulk-link');
   if (bulkLinkBtn) {
@@ -213,6 +252,31 @@ function setupEventListeners() {
         break;
       case SKU_BACKFILL_COMPLETE:
         handleBackfillComplete(message);
+        break;
+      case CSV_IMPORT_PROGRESS:
+        handleCsvImportProgress(message);
+        break;
+      case CSV_IMPORT_COMPLETE:
+        handleCsvImportComplete(message);
+        break;
+      case MONITOR_PAUSED:
+        if (message.paused) {
+          $('#btn-pause-monitor').style.display = 'none';
+          $('#btn-resume-monitor').style.display = '';
+        } else {
+          $('#btn-resume-monitor').style.display = 'none';
+          $('#btn-pause-monitor').style.display = '';
+        }
+        break;
+      // --- Page-Based Tracker ---
+      case TRACKING_PROGRESS:
+        handleTrackerProgress(message);
+        break;
+      case TRACKING_LOG:
+        handleTrackerLogEntry(message.entry);
+        break;
+      case TRACKING_STATUS:
+        updateTrackerUI(message.running);
         break;
     }
   });
@@ -1101,15 +1165,39 @@ async function clearAlerts() {
 // ============================
 function handleProgress(msg) {
   const section = $('#progress-section');
+  const statsEl = $('#progress-stats');
 
   if (msg.status === 'running') {
     section.style.display = '';
     const pct = msg.total ? Math.round((msg.checked / msg.total) * 100) : 0;
     $('#progress-bar').style.width = pct + '%';
-    $('#progress-text').textContent = `${msg.checked}/${msg.total} checked | ${msg.changed || 0} changed | ${msg.errors || 0} errors`;
+    $('#progress-text').textContent = `${msg.checked}/${msg.total} checked (${pct}%) | ${msg.changed || 0} changed | ${msg.errors || 0} errors`;
+
+    // EcomSniper-inspired: show detailed progress stats
+    if (statsEl) {
+      statsEl.style.display = '';
+      const processed = $('#prog-processed');
+      const total = $('#prog-total');
+      const changed = $('#prog-changed');
+      const errors = $('#prog-errors');
+      const unprocessed = $('#prog-unprocessed');
+      if (processed) processed.textContent = msg.checked || 0;
+      if (total) total.textContent = msg.total || 0;
+      if (changed) changed.textContent = msg.changed || 0;
+      if (errors) errors.textContent = msg.errors || 0;
+      if (unprocessed) unprocessed.textContent = (msg.total || 0) - (msg.checked || 0) - (msg.skipped || 0);
+    }
+
+    // Show pause button when running
+    const pauseBtn = $('#btn-pause-monitor');
+    if (pauseBtn) pauseBtn.style.display = '';
+
     if (msg.lastProduct) log(`Checked: ${msg.lastProduct}`);
   } else if (msg.status === 'complete') {
     section.style.display = 'none';
+    if (statsEl) statsEl.style.display = 'none';
+    $('#btn-pause-monitor').style.display = 'none';
+    $('#btn-resume-monitor').style.display = 'none';
     $('#stat-last-run').textContent = 'Just now';
     log(msg.message || 'Check cycle complete');
     // Reload products to reflect updated data
@@ -1170,6 +1258,12 @@ function populateSettingsForm() {
   $('#set-rounding').value = settings.priceRounding || '99';
   $('#set-badge').checked = settings.alertBadge !== false;
   $('#set-notification').checked = settings.alertNotification !== false;
+
+  // EcomSniper-inspired settings
+  const reusableTabEl = $('#set-reusable-tab');
+  if (reusableTabEl) reusableTabEl.checked = settings.useReusableTab !== false;
+  const trackingTimeoutEl = $('#set-tracking-timeout');
+  if (trackingTimeoutEl) trackingTimeoutEl.value = settings.trackingTimeout || 30000;
 
   // Toggle visibility
   $('#markup-pct-group').style.display = settings.priceMarkupType === 'percentage' ? '' : 'none';
@@ -1236,7 +1330,10 @@ async function saveSettings() {
     priceMinProfit: parseFloat($('#set-min-profit').value) || 2,
     priceRounding: $('#set-rounding').value,
     alertBadge: $('#set-badge').checked,
-    alertNotification: $('#set-notification').checked
+    alertNotification: $('#set-notification').checked,
+    // EcomSniper-inspired settings
+    useReusableTab: $('#set-reusable-tab')?.checked !== false,
+    trackingTimeout: parseInt($('#set-tracking-timeout')?.value) || 30000
   };
 
   const resp = await sendMsg(SAVE_MONITOR_SETTINGS, { settings });
@@ -1568,6 +1665,132 @@ async function applyBulkLinks() {
 }
 
 // ============================
+// CSV Import (EcomSniper-inspired)
+// ============================
+// EcomSniper uses CSV-based tracking: user downloads active listings CSV from eBay,
+// which contains customLabel fields with base64-encoded Amazon ASINs.
+// We parse the CSV client-side and send rows to the service worker for import.
+
+async function handleCsvImport() {
+  const fileInput = $('#csv-file-input');
+  const file = fileInput?.files?.[0];
+  if (!file) return log('No CSV file selected');
+
+  const domain = $('#csv-import-domain')?.value || 'com.au';
+  const progressEl = $('#csv-import-progress');
+  progressEl.style.display = '';
+  $('#csv-progress-text').textContent = 'Parsing CSV...';
+
+  try {
+    const text = await file.text();
+    const rows = parseCsv(text);
+
+    if (rows.length === 0) {
+      log('No valid rows found in CSV');
+      progressEl.style.display = 'none';
+      return;
+    }
+
+    log(`Parsed ${rows.length} rows from CSV. Importing...`);
+    $('#csv-progress-text').textContent = `Importing ${rows.length} products...`;
+
+    const resp = await sendMsg(IMPORT_CSV_PRODUCTS, { rows, domain });
+
+    if (resp?.success) {
+      log(`CSV import: ${resp.added} added, ${resp.updated} updated, ${resp.skipped} skipped`);
+      await loadProducts();
+      renderProducts();
+      renderUnlinkedProducts();
+      updateStats();
+    } else {
+      log('CSV import error: ' + (resp?.error || 'Unknown error'));
+    }
+  } catch (e) {
+    log('CSV parse error: ' + e.message);
+  } finally {
+    progressEl.style.display = 'none';
+  }
+}
+
+/**
+ * Parse CSV text into an array of row objects.
+ * Handles eBay's standard CSV format and various header naming conventions.
+ */
+function parseCsv(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return [];
+
+  // Parse header row
+  const headers = parseCsvLine(lines[0]);
+  const rows = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseCsvLine(lines[i]);
+    if (values.length < 2) continue;
+
+    const row = {};
+    headers.forEach((h, idx) => {
+      row[h.trim()] = values[idx] || '';
+    });
+
+    // Map common eBay CSV field names to our format
+    rows.push({
+      itemId: row['Item number'] || row['Item ID'] || row['ItemID'] || row['Listing ID'] || '',
+      title: row['Title'] || row['Item title'] || row['Listing title'] || '',
+      customLabel: row['Custom label'] || row['Custom Label'] || row['SKU'] || row['customLabel'] || '',
+      price: row['Price'] || row['Current price'] || row['Start price'] || row['Buy It Now price'] || '',
+      quantity: row['Available quantity'] || row['Quantity'] || row['Quantity available'] || ''
+    });
+  }
+
+  return rows.filter(r => r.itemId);
+}
+
+/**
+ * Parse a single CSV line, handling quoted fields with commas.
+ */
+function parseCsvLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === ',' && !inQuotes) {
+      result.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+function handleCsvImportProgress(msg) {
+  const pct = msg.total ? Math.round((msg.processed / msg.total) * 100) : 0;
+  $('#csv-progress-bar').style.width = pct + '%';
+  $('#csv-progress-text').textContent = `${msg.processed}/${msg.total} — ${msg.added} added, ${msg.updated} updated`;
+}
+
+function handleCsvImportComplete(msg) {
+  $('#csv-import-progress').style.display = 'none';
+  log(`CSV import complete: ${msg.added} added, ${msg.updated} updated, ${msg.skipped} skipped`);
+  loadProducts().then(() => {
+    renderProducts();
+    renderUnlinkedProducts();
+    updateStats();
+  });
+}
+
+// ============================
 // Utilities
 // ============================
 function sendMsg(type, payload = {}) {
@@ -1601,6 +1824,226 @@ function escHtml(str) {
 }
 
 // ============================
+// Page-Based Tracker (EcomSniper-style)
+// ============================
+let trackerIsRunning = false;
+
+async function initTracker() {
+  const resp = await sendMsg(GET_TRACKER_SETTINGS);
+  if (resp?.success) {
+    populateTrackerForm(resp.settings);
+    trackerIsRunning = resp.running;
+    updateTrackerUI(resp.running);
+    if (resp.page) $('#trk-current-page').value = resp.page;
+    if (resp.position) $('#trk-current-position').value = resp.position;
+    if (resp.totalPages) $('#trk-total-pages').textContent = resp.totalPages;
+    // Populate logs
+    if (resp.logs && resp.logs.length > 0) {
+      const container = $('#tracker-log-container');
+      for (const entry of resp.logs.slice(-200)) {
+        appendTrackerLog(container, entry);
+      }
+    }
+  }
+
+  // Event listeners
+  $('#btn-start-tracker').addEventListener('click', startTracker);
+  $('#btn-stop-tracker').addEventListener('click', stopTracker);
+  $('#btn-reset-tracker').addEventListener('click', resetTracker);
+  $('#btn-save-tracker-settings').addEventListener('click', saveTrackerSettings);
+  $('#btn-toggle-tracker-logs').addEventListener('click', () => {
+    const container = $('#tracker-log-container');
+    const btn = $('#btn-toggle-tracker-logs');
+    if (container.style.display === 'none') {
+      container.style.display = '';
+      btn.textContent = 'Hide Logs';
+    } else {
+      container.style.display = 'none';
+      btn.textContent = 'Show Logs';
+    }
+  });
+}
+
+function populateTrackerForm(s) {
+  $('#trk-stock-enable').checked = s.enableStockMonitor !== false;
+  $('#trk-price-enable').checked = s.enablePriceMonitor !== false;
+  $('#trk-prime-filter').value = s.primeFilter || 'all';
+  $('#trk-restock-qty').value = s.restockQuantity || 1;
+  $('#trk-force-restock').checked = s.forceRestock || false;
+  $('#trk-force-restock-qty').value = s.forceRestockQty || 1;
+  $('#trk-pricing-option').value = s.pricingOption || 'markup';
+  $('#trk-markup-pct').value = s.markupPercentage || 100;
+  $('#trk-price-threshold').value = s.priceTriggerThreshold || 2;
+  $('#trk-price-ending').value = s.priceEndingFilter || '';
+  $('#trk-prune-no-sku').checked = s.pruneNoSku || false;
+  $('#trk-prune-no-sku-action').value = s.pruneNoSkuAction || 'oos';
+  $('#trk-prune-broken-sku').checked = s.pruneBrokenSku || false;
+  $('#trk-prune-broken-sku-action').value = s.pruneBrokenSkuAction || 'oos';
+  $('#trk-prune-not-found').checked = s.pruneNotFound || false;
+  $('#trk-prune-not-found-action').value = s.pruneNotFoundAction || 'oos';
+  $('#trk-prune-sku-changed').checked = s.pruneSkuChanged || false;
+  $('#trk-prune-sku-changed-action').value = s.pruneSkuChangedAction || 'oos';
+  $('#trk-prune-no-sales').checked = s.pruneNoSales || false;
+  $('#trk-prune-no-sales-action').value = s.pruneNoSalesAction || 'oos';
+  $('#trk-prune-no-sales-count').value = s.pruneNoSalesCount || 0;
+  $('#trk-prune-no-sales-days').value = s.pruneNoSalesDays || 30;
+  $('#trk-continuous').checked = s.continuousTracking || false;
+  $('#trk-timeout').value = s.trackingTimeout || 60;
+  $('#trk-log-data').checked = s.logData !== false;
+  $('#trk-pin-tabs').checked = s.pinTabs !== false;
+  $('#trk-keep-ebay-open').checked = s.keepEbayPageOpen || false;
+  $('#trk-ebay-domain').value = s.ebayDomain || 'com.au';
+  $('#trk-amazon-domain').value = s.amazonDomain || 'com.au';
+  $('#trk-oos-action').value = s.oosAction || 'zero';
+}
+
+function collectTrackerSettings() {
+  return {
+    enableStockMonitor: $('#trk-stock-enable').checked,
+    enablePriceMonitor: $('#trk-price-enable').checked,
+    primeFilter: $('#trk-prime-filter').value,
+    restockQuantity: parseInt($('#trk-restock-qty').value) || 1,
+    forceRestock: $('#trk-force-restock').checked,
+    forceRestockQty: parseInt($('#trk-force-restock-qty').value) || 1,
+    pricingOption: $('#trk-pricing-option').value,
+    markupPercentage: parseInt($('#trk-markup-pct').value) || 100,
+    priceTriggerThreshold: parseFloat($('#trk-price-threshold').value) || 2,
+    priceEndingFilter: $('#trk-price-ending').value.trim(),
+    pruneNoSku: $('#trk-prune-no-sku').checked,
+    pruneNoSkuAction: $('#trk-prune-no-sku-action').value,
+    pruneBrokenSku: $('#trk-prune-broken-sku').checked,
+    pruneBrokenSkuAction: $('#trk-prune-broken-sku-action').value,
+    pruneNotFound: $('#trk-prune-not-found').checked,
+    pruneNotFoundAction: $('#trk-prune-not-found-action').value,
+    pruneSkuChanged: $('#trk-prune-sku-changed').checked,
+    pruneSkuChangedAction: $('#trk-prune-sku-changed-action').value,
+    pruneNoSales: $('#trk-prune-no-sales').checked,
+    pruneNoSalesAction: $('#trk-prune-no-sales-action').value,
+    pruneNoSalesCount: parseInt($('#trk-prune-no-sales-count').value) || 0,
+    pruneNoSalesDays: parseInt($('#trk-prune-no-sales-days').value) || 30,
+    continuousTracking: $('#trk-continuous').checked,
+    trackingTimeout: parseInt($('#trk-timeout').value) || 60,
+    logData: $('#trk-log-data').checked,
+    pinTabs: $('#trk-pin-tabs').checked,
+    keepEbayPageOpen: $('#trk-keep-ebay-open').checked,
+    ebayDomain: $('#trk-ebay-domain').value,
+    amazonDomain: $('#trk-amazon-domain').value,
+    oosAction: $('#trk-oos-action').value,
+    itemsPerPage: 200
+  };
+}
+
+async function saveTrackerSettings() {
+  const settings = collectTrackerSettings();
+  // Also save page/position overrides
+  const page = parseInt($('#trk-current-page').value) || 1;
+  const position = parseInt($('#trk-current-position').value) || 1;
+  await sendMsg(SAVE_TRACKER_SETTINGS, { settings });
+  await chrome.storage.local.set({ trackerPage: page, trackerPosition: position });
+  const confirm = $('#tracker-settings-saved');
+  confirm.style.display = '';
+  setTimeout(() => { confirm.style.display = 'none'; }, 2000);
+  log('Tracker settings saved');
+}
+
+async function startTracker() {
+  // Save settings first
+  const settings = collectTrackerSettings();
+  await sendMsg(SAVE_TRACKER_SETTINGS, { settings });
+  
+  const resp = await sendMsg(START_TRACKING);
+  if (resp?.error) {
+    log('Tracker error: ' + resp.error);
+  } else {
+    trackerIsRunning = true;
+    updateTrackerUI(true);
+    log('Tracker started');
+  }
+}
+
+async function stopTracker() {
+  const resp = await sendMsg(STOP_TRACKING);
+  if (resp?.success) {
+    trackerIsRunning = false;
+    updateTrackerUI(false);
+    log('Tracker stopped');
+  }
+}
+
+async function resetTracker() {
+  const resp = await sendMsg(RESET_TRACKING);
+  if (resp?.success) {
+    $('#trk-current-page').value = 1;
+    $('#trk-current-position').value = 1;
+    log('Tracker position reset to page 1, position 1');
+  }
+}
+
+function updateTrackerUI(running) {
+  trackerIsRunning = running;
+  const startBtn = $('#btn-start-tracker');
+  const stopBtn = $('#btn-stop-tracker');
+  const badge = $('#tracker-status-badge');
+  const overlay = $('#tracker-progress-overlay');
+
+  if (running) {
+    startBtn.style.display = 'none';
+    stopBtn.style.display = '';
+    badge.textContent = 'Running';
+    badge.className = 'badge badge-running';
+    overlay.style.display = '';
+  } else {
+    startBtn.style.display = '';
+    stopBtn.style.display = 'none';
+    badge.textContent = 'Stopped';
+    badge.className = 'badge badge-stopped';
+    overlay.style.display = 'none';
+  }
+}
+
+function handleTrackerProgress(msg) {
+  const overlay = $('#tracker-progress-overlay');
+  overlay.style.display = '';
+
+  // Item progress
+  const itemPct = msg.totalOnPage > 0 ? Math.round((msg.position / msg.totalOnPage) * 100) : 0;
+  $('#trk-item-bar').style.width = itemPct + '%';
+  $('#trk-item-text').textContent = `Item ${msg.position} of ${msg.totalOnPage} (${itemPct}%)`;
+
+  // Page progress
+  const pagePct = msg.totalPages > 0 ? Math.round((msg.page / msg.totalPages) * 100) : 0;
+  $('#trk-page-bar').style.width = pagePct + '%';
+  $('#trk-page-text').textContent = `Page ${msg.page} of ${msg.totalPages} (${pagePct}%)`;
+
+  // Current item
+  if (msg.itemTitle) {
+    $('#trk-current-item').textContent = `${msg.itemId}: ${msg.itemTitle}`;
+  }
+
+  // Update position inputs
+  $('#trk-current-page').value = msg.page;
+  $('#trk-current-position').value = msg.position;
+  $('#trk-total-pages').textContent = msg.totalPages;
+  $('#trk-total-on-page').textContent = msg.totalOnPage;
+}
+
+function handleTrackerLogEntry(entry) {
+  const container = $('#tracker-log-container');
+  appendTrackerLog(container, entry);
+}
+
+function appendTrackerLog(container, entry) {
+  const line = document.createElement('div');
+  const time = new Date(entry.timestamp).toLocaleTimeString();
+  line.textContent = `[${time}] ${entry.message}`;
+  if (entry.level === 'warn') line.className = 'log-warn';
+  if (entry.level === 'error') line.className = 'log-error';
+  container.appendChild(line);
+  container.scrollTop = container.scrollHeight;
+}
+
+// ============================
 // Boot
 // ============================
 init();
+initTracker();
