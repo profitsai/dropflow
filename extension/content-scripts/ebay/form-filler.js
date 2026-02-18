@@ -3882,7 +3882,21 @@
       // Handle any confirmation dialogs (e.g., "Delete variations - Are you sure?")
       await dismissVariationDialogs();
       builderRoot = findBuilderRoot();
-      const stillExists = readAttributeChips().some(c => c.norm === chip.norm);
+      let stillExists = readAttributeChips().some(c => c.norm === chip.norm);
+      // Fallback: if chip wasn't removed, try alternative close button selectors
+      if (stillExists) {
+        const altClose = queryAllWithShadow(
+          'svg, [aria-label*="remove" i], [aria-label*="close" i], [aria-label*="delete" i], button:last-child, [role="button"]:last-child',
+          chip.el
+        ).find(n => isElementVisible(n));
+        if (altClose) {
+          simulateClick(altClose);
+          await sleep(500);
+          await dismissVariationDialogs();
+          builderRoot = findBuilderRoot();
+          stillExists = readAttributeChips().some(c => c.norm === chip.norm);
+        }
+      }
       return !stillExists;
     };
 
@@ -4821,6 +4835,34 @@
       chips: chips.map(c => c.text),
       desiredAxes: desiredAxes.map(a => a.name)
     });
+
+    // Pre-clean: remove any blacklisted attribute chips before the selective reset.
+    // When eBay reuses a draft, stale attributes like "Character" or "Character Family"
+    // may already be selected. These must be removed first to avoid interfering with
+    // axis matching and to prevent them surviving through accidental alias matches.
+    {
+      const blacklistedChips = chips.filter(c => BUILDER_AXIS_BLACKLIST.has(c.norm));
+      if (blacklistedChips.length > 0) {
+        console.warn(`[DropFlow] Removing ${blacklistedChips.length} blacklisted stale chip(s): [${blacklistedChips.map(c => c.text).join(', ')}]`);
+        for (const chip of blacklistedChips) {
+          const removed = await removeChip(chip);
+          if (!removed) {
+            // Retry with alternative close button selectors
+            const closeBtn = chip.el.querySelector('svg, [aria-label*="remove" i], [aria-label*="close" i], [aria-label*="delete" i], button:last-child');
+            if (closeBtn) {
+              simulateClick(closeBtn);
+              await sleep(500);
+              await dismissVariationDialogs();
+            }
+          }
+          await sleep(500);
+          await logVariationStep('variationBuilder:blacklistChipRemoved', { chip: chip.text, removed });
+        }
+        builderRoot = findBuilderRoot();
+        chips = readAttributeChips();
+        console.warn(`[DropFlow] After blacklist cleanup: chips=[${chips.map(c => c.text).join(', ')}]`);
+      }
+    }
 
     // Selective reset: only keep chips that EXACTLY match a desired axis (or are close synonyms).
     // "Dog Size" must NOT be treated as a match for "Size" — they are different eBay attributes.
