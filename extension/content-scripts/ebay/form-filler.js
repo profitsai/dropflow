@@ -3533,6 +3533,8 @@
       }
 
       const chips = [];
+
+      // Strategy 1: scan visible clickables in the attribute band (original approach)
       for (const el of getVisibleClickables()) {
         const rect = el.getBoundingClientRect();
         const cy = rect.top + rect.height / 2;
@@ -3547,13 +3549,16 @@
         if (!cleaned || cleaned.length > 30) continue;
 
         const removeTarget = queryAllWithShadow(
-          'button, [role="button"], [aria-label], [title], span, i',
+          'button, [role="button"], [aria-label], [title], span, i, svg',
           el
         ).find(n => {
           const t = ((n.textContent || '').trim()).toLowerCase();
           const aria = (n.getAttribute?.('aria-label') || '').toLowerCase();
           const title = (n.getAttribute?.('title') || '').toLowerCase();
-          return /^x$|^×$/.test(t) || /remove|delete|close/.test(`${aria} ${title}`);
+          const role = (n.getAttribute?.('role') || '').toLowerCase();
+          return /^x$|^×$/.test(t) || /remove|delete|close/.test(`${aria} ${title}`) ||
+                 (n.tagName === 'svg' && /close|remove|delete|dismiss/.test(`${aria} ${title}`)) ||
+                 (role === 'img' && /close|remove/.test(aria));
         }) || null;
 
         chips.push({
@@ -3564,6 +3569,76 @@
           removeTarget,
           rect
         });
+      }
+
+      // Strategy 2 (fallback): search for eBay chip/tag elements directly using
+      // common eBay MSKU builder selectors. These use close-button SVGs rather than
+      // text "x" glyphs, so Strategy 1 may miss them.
+      if (chips.length === 0) {
+        const chipSelectors = [
+          '[class*="chip"]', '[class*="tag"]', '[class*="token"]',
+          '[class*="Chip"]', '[class*="Tag"]', '[class*="Token"]',
+          '[data-testid*="chip"]', '[data-testid*="tag"]',
+          '.ebay-chip', '.attribute-chip'
+        ];
+        const candidateEls = queryAllWithShadow(chipSelectors.join(', '), builderRoot)
+          .filter(el => isElementVisible(el));
+        for (const el of candidateEls) {
+          const rect = el.getBoundingClientRect();
+          const cy = rect.top + rect.height / 2;
+          // Use broader band when label was not found
+          const effectiveTop = label ? bandTop : 0;
+          const effectiveBottom = label ? bandBottom : (optionsLabel ? optionsLabel.getBoundingClientRect().top - 6 : 500);
+          if (cy < effectiveTop || cy > effectiveBottom) continue;
+          const raw = (el.textContent || '').trim();
+          if (!raw || raw.length > 45) continue;
+          if (/^\+\s*add$/i.test(raw) || /^\+/.test(raw)) continue;
+          if (/^(continue|cancel|options|attributes)$/i.test(raw)) continue;
+          const hasRemoveGlyph = /\s+[x×]\s*$/i.test(raw);
+          const cleaned = raw.replace(/\s+[x×]\s*$/i, '').trim();
+          if (!cleaned || cleaned.length > 30) continue;
+          // Check for SVG or button close affordance inside
+          const removeTarget = el.querySelector('button, [role="button"], svg, [aria-label*="remove"], [aria-label*="close"], [aria-label*="delete"]') || null;
+          chips.push({
+            el,
+            text: cleaned,
+            norm: norm(cleaned),
+            hasRemoveGlyph: hasRemoveGlyph || !!removeTarget,
+            removeTarget,
+            rect
+          });
+        }
+      }
+
+      // Strategy 3 (broader fallback): scan ALL visible elements in the attribute band
+      // that contain a close/remove affordance (SVG icon, aria-label, etc.)
+      if (chips.length === 0) {
+        const allEls = queryAllWithShadow('div, span, li, a', builderRoot)
+          .filter(el => isElementVisible(el));
+        const effectiveBottom = optionsLabel ? optionsLabel.getBoundingClientRect().top - 6 : 500;
+        for (const el of allEls) {
+          const rect = el.getBoundingClientRect();
+          if (rect.width < 30 || rect.width > 300 || rect.height < 16 || rect.height > 60) continue;
+          const cy = rect.top + rect.height / 2;
+          if (cy < bandTop || cy > effectiveBottom) continue;
+          const raw = (el.textContent || '').trim();
+          if (!raw || raw.length > 45 || raw.length < 2) continue;
+          if (/^\+\s*add$/i.test(raw) || /^\+/.test(raw)) continue;
+          if (/^(continue|cancel|options|attributes|save|update)$/i.test(raw)) continue;
+          if (/create your own|send us your comments/i.test(raw)) continue;
+          // Must have a close/remove affordance to qualify as a chip
+          const removeTarget = el.querySelector('button, [role="button"], [role="img"]') ||
+            el.querySelector('svg') || null;
+          if (!removeTarget) continue;
+          const removeAria = (removeTarget.getAttribute?.('aria-label') || '').toLowerCase();
+          const removeTxt = (removeTarget.textContent || '').trim().toLowerCase();
+          const isSvg = removeTarget.tagName === 'svg' || removeTarget.tagName === 'SVG';
+          if (!isSvg && !/^x$|^×$/.test(removeTxt) && !/remove|delete|close|dismiss/.test(removeAria)) continue;
+          const hasRemoveGlyph = /\s+[x×]\s*$/i.test(raw);
+          const cleaned = raw.replace(/\s+[x×]\s*$/i, '').trim();
+          if (!cleaned || cleaned.length > 30) continue;
+          chips.push({ el, text: cleaned, norm: norm(cleaned), hasRemoveGlyph: true, removeTarget, rect });
+        }
       }
 
       // In this eBay UI, real attribute chips have a remove affordance (x/close).
@@ -3644,8 +3719,35 @@
       return true;
     };
 
-    const findAddAttributeTrigger = () =>
-      findByText(/^\+\s*add$/i) || findByText(/^\s*add\s*$/i) || findByText(/\badd\b/i);
+    const findAddAttributeTrigger = () => {
+      // Try exact "+Add" first, then broader patterns.
+      // On eBay AU, the button may be "+ Add", "+Add", "Add", or an icon-only button
+      // near the "Attributes" label.
+      let btn = findByText(/^\+\s*add$/i) || findByText(/^\s*add\s*$/i);
+      if (btn) return btn;
+      // Search for buttons/links with "add" near the attributes label area
+      const attrLabel = findLabel(/^attributes$/i) || findLabel(/^\s*attributes\s*$/i) ||
+                        findLabel(/^properties$/i) || findLabel(/^\s*properties\s*$/i);
+      if (attrLabel) {
+        const labelRect = attrLabel.getBoundingClientRect();
+        const nearby = getVisibleClickables().filter(el => {
+          const r = el.getBoundingClientRect();
+          // Within 200px horizontally and 60px vertically of the label
+          return Math.abs(r.top - labelRect.top) < 60 &&
+                 r.left > labelRect.right - 20 && r.left < labelRect.right + 200;
+        });
+        btn = nearby.find(el => /\badd\b/i.test((el.textContent || '').trim()) ||
+                                 /\badd\b/i.test(el.getAttribute?.('aria-label') || ''));
+        if (btn) return btn;
+        // Icon-only button (e.g., "+" icon) near the label
+        btn = nearby.find(el => {
+          const txt = (el.textContent || '').trim();
+          return txt === '+' || /^\+$/.test(txt);
+        });
+        if (btn) return btn;
+      }
+      return findByText(/\badd\b/i);
+    };
 
     const clickAtPoint = (el, x, y) => {
       if (!el) return;
@@ -3850,6 +3952,14 @@
 
       const didCreateAxisChip = () =>
         readAttributeChips().some(c => matchesAlias(c.norm, spec, true) || c.norm === norm(axisLabel));
+
+      // Pre-check: if the attribute chip already exists (e.g. from a previous session
+      // or because the attribute was pre-checked in the dialog), skip the dialog entirely.
+      if (didCreateAxisChip()) {
+        console.warn(`[DropFlow] Chip for "${axisLabel}" already exists, skipping dialog`);
+        await logVariationStep('variationBuilder:chipAlreadyExists', { axis: axisLabel });
+        return true;
+      }
 
       for (let attempt = 1; attempt <= 3; attempt++) {
         const addBtn = findAddAttributeTrigger();
