@@ -103,7 +103,12 @@
   // Message listener
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'READ_EBAY_LISTING') {
-      sendResponse(readListing());
+      try {
+        sendResponse(readListing());
+      } catch (error) {
+        console.error('[DropFlow] readListing() threw:', error);
+        sendResponse({ error: error.message || 'Unknown listing read error' });
+      }
       return false;
     }
   });

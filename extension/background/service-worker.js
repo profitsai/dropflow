@@ -326,6 +326,51 @@ async function getOrchestrationState() {
 }
 
 // ============================
+// Permission-Checked Script Injection
+// ============================
+/**
+ * Check if we have host permission for a given URL before calling
+ * chrome.scripting.executeScript. Returns true if permission exists.
+ * If missing, logs a warning and optionally surfaces an error.
+ */
+async function hasHostPermission(url) {
+  if (!url) return false;
+  try {
+    return await chrome.permissions.contains({ origins: [new URL(url).origin + '/*'] });
+  } catch (_) {
+    // URL parsing failed or permissions API error — assume allowed (host_permissions in manifest)
+    return true;
+  }
+}
+
+/**
+ * Wrapper around chrome.scripting.executeScript that checks host permissions first.
+ * Returns the executeScript result, or throws with a clear error message on permission failure.
+ */
+async function safeExecuteScript(options) {
+  // If we have a tabId, check the tab's URL for permission
+  if (options.target?.tabId) {
+    try {
+      const tab = await chrome.tabs.get(options.target.tabId);
+      if (tab.url) {
+        const hasPermission = await hasHostPermission(tab.url);
+        if (!hasPermission) {
+          const domain = new URL(tab.url).hostname;
+          const msg = `Missing host permission for ${domain}. Grant permission in extension settings or add the domain to host_permissions.`;
+          console.error(`[DropFlow] ${msg}`);
+          throw new Error(msg);
+        }
+      }
+    } catch (e) {
+      // If it's our permission error, re-throw
+      if (e.message?.includes('Missing host permission')) throw e;
+      // Otherwise (tab not found, etc.), let executeScript handle it
+    }
+  }
+  return chrome.scripting.executeScript(options);
+}
+
+// ============================
 // Message Router
 // ============================
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -341,7 +386,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'INJECT_FORM_FILLER_IN_FRAMES': {
       const tabId = sender?.tab?.id || payload?.tabId;
       if (tabId) {
-        chrome.scripting.executeScript({
+        safeExecuteScript({
           target: { tabId, allFrames: true },
           files: ['content-scripts/ebay/form-filler.js']
         }).then(() => {
@@ -775,7 +820,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const tabId = sender?.tab?.id;
       if (!tabId) { sendResponse({ error: 'No tab id' }); return false; }
       const { callbackId, fileDataArr } = payload;
-      chrome.scripting.executeScript({
+      safeExecuteScript({
         target: { tabId },
         world: 'MAIN',
         func: async (CALLBACK, FILE_DATA) => {
@@ -848,7 +893,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const tabId = sender?.tab?.id;
       if (!tabId) { sendResponse({ error: 'No tab id' }); return false; }
       const { callbackId, fileDataArr } = payload;
-      chrome.scripting.executeScript({
+      safeExecuteScript({
         target: { tabId },
         world: 'MAIN',
         func: async (CALLBACK_ID, FILE_DATA) => {
@@ -924,7 +969,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const tabId = sender?.tab?.id;
       if (!tabId) { sendResponse({ error: 'No tab id' }); return false; }
       const { callbackId, uploadedUrls } = payload;
-      chrome.scripting.executeScript({
+      safeExecuteScript({
         target: { tabId },
         world: 'MAIN',
         func: (CALLBACK_ID, urls) => {

@@ -393,8 +393,13 @@
   // ============================
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'SCRAPE_AMAZON_PRODUCT') {
-      const data = scrapeProduct();
-      sendResponse(data);
+      try {
+        const data = scrapeProduct();
+        sendResponse(data);
+      } catch (error) {
+        console.error('[DropFlow Amazon] scrapeProduct() threw:', error);
+        sendResponse({ error: error.message || 'Unknown scrape error' });
+      }
       return false;
     }
   });
