@@ -3383,6 +3383,23 @@
       if (current && current.startedAt === flowStartedAt) delete flowLockHost[flowLockKey];
     }, 45000);
 
+    // FIX: If running in parent frame but MSKU iframe exists, bail immediately.
+    // The iframe's content script should handle the builder flow. Running from
+    // parent would acquire the cross-context lock, blocking the iframe.
+    if (IS_TOP_FRAME) {
+      try {
+        const mskuIframe = findMskuBulkeditIframe();
+        if (mskuIframe) {
+          const iframeRect = mskuIframe.getBoundingClientRect();
+          if (iframeRect.width > 100 && iframeRect.height > 100) {
+            console.warn('[DropFlow] runVariationBuilderPageFlow: MSKU iframe detected in parent frame — bailing to let iframe handle it');
+            await logVariationStep('variationBuilder:parentBailForIframe', { url: window.location.href });
+            return false;
+          }
+        }
+      } catch (_) {}
+    }
+
     // Cross-context lock: prevent parent frame AND iframe from both running the
     // builder flow simultaneously. Prefer draftId scope; if missing (common in
     // bulkedit subframes), fall back to a host+path scope with shorter TTL.
@@ -3399,8 +3416,17 @@
       const existing = lockData[storageKey];
       const lockAge = existing ? (Date.now() - existing.ts) : null;
       if (existing && lockAge < lockTtlMs) {
-        // Force-release stale locks older than 60 seconds
-        if (lockAge > 60000) {
+        // FIX: If we're in the bulkedit iframe and the lock is held by the parent
+        // (www.ebay.* host), force-release it immediately. The iframe is the correct
+        // context for running the builder — the parent can't access iframe DOM.
+        const isBulkEditFrame = !IS_TOP_FRAME && /(^|\.)bulkedit\.ebay\./i.test(window.location.hostname);
+        const lockHeldByParent = existing.host && /^www\.ebay\./i.test(existing.host);
+        if (isBulkEditFrame && lockHeldByParent) {
+          console.warn(`[DropFlow] Builder cross-context lock held by parent (${existing.host}, age=${lockAge}ms) — force-releasing for iframe`);
+          await logVariationStep('variationBuilder:crossContextLockIframeOverride', { scope: lockScope, host: existing.host, ageMs: lockAge });
+          try { await chrome.storage.local.remove(storageKey); } catch (_) {}
+        } else if (lockAge > 60000) {
+          // Force-release stale locks older than 60 seconds
           console.warn(`[DropFlow] Builder cross-context lock stale (age=${lockAge}ms > 60s) — force-releasing`);
           await logVariationStep('variationBuilder:crossContextLockForceRelease', { scope: lockScope, host: existing.host, ageMs: lockAge });
           try { await chrome.storage.local.remove(storageKey); } catch (_) {}
@@ -4796,6 +4822,17 @@
       // Use native .click() for chip selection to avoid double-toggle
       (asClickableTarget(mapped.chip.el)).click();
       await sleepShort();
+
+      // FIX: Wait for options panel to render after chip click. eBay's React UI
+      // can take >250ms to re-render the options section, especially in the
+      // bulkedit iframe. Poll until we see options or "Create your own".
+      for (let optWait = 0; optWait < 12; optWait++) {
+        const earlyOpts = readVisibleOptions();
+        const hasCreateOwn = findByText(/create your own/i);
+        if (earlyOpts.length > 0 || hasCreateOwn) break;
+        await sleep(250);
+        builderRoot = findBuilderRoot();
+      }
       selectedAxes++;
 
       const visibleOpts = readVisibleOptions();
@@ -10307,6 +10344,42 @@
             await logVariationStep('checkPendingData:mskuDialogWaitComplete', { url: window.location.href });
             watchForPageTransitions(storageKey);
             return;
+          }
+          // FIX: Before running builder in parent, double-check for MSKU iframe.
+          // The iframe may not have been detected during initial context detection
+          // (it loads asynchronously). Running the builder from parent would acquire
+          // the cross-context lock and block the iframe's builder flow.
+          if (IS_TOP_FRAME) {
+            const lateIframe = findMskuBulkeditIframe();
+            if (lateIframe) {
+              console.warn('[DropFlow] MSKU iframe found (late detection) — delegating to iframe instead of running builder in parent');
+              await logVariationStep('checkPendingData:lateMskuIframeDetected', { url: window.location.href });
+              try { await sendMessageSafe({ type: 'INJECT_FORM_FILLER_IN_FRAMES', url: window.location.href }, 5000); } catch (_) {}
+              // Wait briefly for iframe builder to complete
+              for (let mw = 0; mw < 60; mw++) {
+                await sleep(500);
+                const dialogOpen = !!document.querySelector('.msku-dialog, [class*="msku-dialog"]');
+                const iframeStillThere = !!findMskuBulkeditIframe();
+                if (!dialogOpen && !iframeStillThere) {
+                  await sleep(2000);
+                  break;
+                }
+                // Check builder completion flag
+                if (mw > 5 && mw % 5 === 0) {
+                  try {
+                    const stored = await chrome.storage.local.get('dropflow_builder_complete');
+                    const cd = stored?.dropflow_builder_complete;
+                    if (cd && (Date.now() - cd.ts) < 120000) {
+                      await sleep(2000);
+                      try { await chrome.storage.local.remove('dropflow_builder_complete'); } catch (_) {}
+                      break;
+                    }
+                  } catch (_) {}
+                }
+              }
+              watchForPageTransitions(storageKey);
+              return;
+            }
           }
           await runVariationBuilderPageFlow(productData, [], initialBuilderCtx.doc);
         }
