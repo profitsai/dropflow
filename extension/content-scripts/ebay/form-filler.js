@@ -565,7 +565,8 @@
         if (descArea) await scrollToAndWait(descArea, 1000);
       }
 
-      await _dfLog('STEP5', 'images...');
+      const _tPhotoStart = Date.now();
+      await _dfLog('STEP5_START', `photo upload starting, count=${productData.images?.length || 0}`);
       // 5. Upload images (re-enabled: sendMessageSafe handles SW timeouts/retries)
       // Capped at 2 retries (was 3) to reduce total time before variations
       if (productData.images && productData.images.length > 0) {
@@ -600,6 +601,7 @@
         }
       }
 
+      await _dfLog('STEP5_END', `photo upload result=${results.images}, elapsed=${Date.now()-_tPhotoStart}ms`);
       // 5a. Verify photos persisted — poll draft API to confirm
       // IMPORTANT: Cap total verification time to prevent stalling the entire form fill.
       // The ensurePhotosInDraft fallback can hang for minutes if the SW is dead (MV3 lifecycle).
@@ -686,7 +688,7 @@
       }
 
       if (hasVariations) {
-        await _dfLog('VARIATIONS', 'starting...'); console.log('[DropFlow] Multi-variation product detected, starting DOM variation flow...');
+        await _dfLog('VARIATIONS_START', 'starting DOM variation flow...'); console.log('[DropFlow] Multi-variation product detected, starting DOM variation flow...');
       await _dfLog('STEP6', 'variations starting...');
         showVariationDiagnostic({
           status: 'starting',
@@ -694,6 +696,7 @@
           skuCount: productData.variations.skus?.length || 0
         });
         let varResult = null;
+        const _tVarStart = Date.now();
         try {
           varResult = await Promise.race([
             fillVariations(productData),
@@ -706,6 +709,7 @@
           console.error('[DropFlow] fillVariations threw:', e);
           varResult = null;
         }
+        await _dfLog('VARIATIONS_END', `fillVariations done, elapsed=${Date.now()-_tVarStart}ms, success=${!!varResult}`);
         if (varResult && varResult.filledAxes) {
           results.variations = true;
           filledVariationAxes = varResult.filledAxes;
@@ -745,6 +749,7 @@
       if (hasVariations && productData.variations?.skus?.length > 0) {
         // Wait for the MSKU builder / variation builder to be gone before polling for the table.
         {
+          const _tBuilderGoneStart = Date.now();
           const BUILDER_GONE_MAX = 60; // up to 30s
           for (let bg = 0; bg < BUILDER_GONE_MAX; bg++) {
             const ctx = detectVariationBuilderContext();
@@ -753,11 +758,15 @@
             if (bg === 0) console.log('[DropFlow] 5c: waiting for builder/MSKU iframe to close before combinations table...');
             await sleep(500);
           }
+          await _dfLog('BUILDER_GONE', `builder-gone wait complete, elapsed=${Date.now()-_tBuilderGoneStart}ms`);
           // Extra settle time for eBay to render the combinations table after builder closes
           await sleep(1500);
         }
+        const _tComboStart = Date.now();
+        await _dfLog('COMBO_TABLE_START', 'fillVariationCombinationsTable entering...');
         try {
           const comboResult = await fillVariationCombinationsTable(productData);
+          await _dfLog('COMBO_TABLE_END', `elapsed=${Date.now()-_tComboStart}ms, prices=${comboResult.filledPrices}/${comboResult.totalRows}, qty=${comboResult.filledQuantities}`);
           if (comboResult.success) {
             results.variationPrices = true;
             console.log(`[DropFlow] Combinations table filled: ${comboResult.filledPrices} prices, ` +
@@ -766,6 +775,7 @@
             console.warn(`[DropFlow] Combinations table fill: ${comboResult.filledPrices}/${comboResult.totalRows} prices`);
           }
         } catch (err) {
+          await _dfLog('COMBO_TABLE_END', `ERROR after ${Date.now()-_tComboStart}ms: ${err?.message}`);
           console.error('[DropFlow] fillVariationCombinationsTable error:', err);
         }
       }
@@ -949,8 +959,11 @@
       }
 
       // 9b. Click "List it"
+      const _tSubmitStart = Date.now();
+      await _dfLog('SUBMIT_START', 'clicking List it button...');
       console.log('[DropFlow] Submitting listing...');
       results.listed = await clickListIt();
+      await _dfLog('SUBMIT_END', `listed=${results.listed}, elapsed=${Date.now()-_tSubmitStart}ms`);
 
     } catch (error) {
       console.error('[DropFlow] Form fill error:', error);
@@ -3020,6 +3033,7 @@
    * on the AliExpress supplier cost + markup.
    */
   async function fillVariationCombinationsTable(productData) {
+    const _tFnStart = Date.now();
     const variations = productData.variations;
     const skus = variations?.skus || [];
     if (skus.length === 0) {
@@ -3027,7 +3041,7 @@
       return { success: false, filledPrices: 0, filledQuantities: 0, filledSKUs: 0, totalRows: 0 };
     }
 
-    console.warn(`[DropFlow] fillCombinationsTable: starting with ${skus.length} SKUs`);
+    console.warn(`[DropFlow] ⏱ fillCombinationsTable: starting with ${skus.length} SKUs at T+0ms`);
 
     // --- 1. Poll for the combinations table (up to 15s) ---
     const findCombinationsTable = () => {
@@ -3076,6 +3090,7 @@
     }
 
     let table = null;
+    const _tTablePoll = Date.now();
     for (let poll = 0; poll < 30; poll++) {
       table = findCombinationsTable();
       if (table) break;
@@ -3086,9 +3101,10 @@
       await sleep(500);
     }
     if (!table) {
-      console.warn('[DropFlow] fillCombinationsTable: table not found after 15s');
+      console.warn(`[DropFlow] ⏱ fillCombinationsTable: table not found after ${Date.now()-_tTablePoll}ms (total ${Date.now()-_tFnStart}ms)`);
       return { success: false, filledPrices: 0, filledQuantities: 0, filledSKUs: 0, totalRows: 0 };
     }
+    console.warn(`[DropFlow] ⏱ fillCombinationsTable: table found after ${Date.now()-_tTablePoll}ms poll`);
 
     // Scroll table into view so inputs are interactable
     table.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3278,7 +3294,7 @@
     }
 
     const result = { success: filledPrices > 0, filledPrices, filledQuantities, filledSKUs, totalRows: dataRows.length };
-    console.warn(`[DropFlow] fillCombinationsTable: ${filledPrices}/${dataRows.length} prices, ${filledQuantities} quantities, ${filledSKUs} SKUs`);
+    console.warn(`[DropFlow] ⏱ fillCombinationsTable: ${filledPrices}/${dataRows.length} prices, ${filledQuantities} qty, ${filledSKUs} SKUs — total ${Date.now()-_tFnStart}ms (tablePoll=${Date.now()-_tTablePoll < 1 ? 'n/a' : Date.now()-_tTablePoll}ms)`);
     return result;
   }
 
@@ -5009,6 +5025,7 @@
         });
       }
 
+      const _tAxisOptionsStart = Date.now();
       const rawVals = Array.from(new Set(mapped.spec.axis.values)).slice(0, 40);
 
       // --- Token-based cross-contamination filter ---
@@ -5047,13 +5064,18 @@
       console.warn(`[DropFlow] Axis "${mapped.spec.axis.name}" values: raw=${rawVals.length}, filtered=${uniqueVals.length} [${uniqueVals.slice(0, 10).join(', ')}${uniqueVals.length > 10 ? '...' : ''}]`);
       let axisHits = 0;
       for (const v of uniqueVals) {
+        const _tOpt = Date.now();
         const ok = await ensureOptionSelected(mapped.spec.axis.name, v);
+        const _tOptElapsed = Date.now() - _tOpt;
+        if (_tOptElapsed > 800) console.warn(`[DropFlow] ⏱ Slow option "${v}" on axis "${mapped.spec.axis.name}": ${_tOptElapsed}ms`);
         if (ok) {
           axisHits++;
           selectedValues++;
         }
       }
 
+      const _tAxisOptionsDone = Date.now();
+      console.warn(`[DropFlow] ⏱ Builder axis "${mapped.spec.axis.name}" options: ${uniqueVals.length} values in ${_tAxisOptionsDone - _tAxisOptionsStart}ms (${axisHits} selected, ~${uniqueVals.length > 0 ? Math.round((_tAxisOptionsDone - _tAxisOptionsStart) / uniqueVals.length) : 0}ms/value)`);
       console.warn(`[DropFlow] Builder axis "${mapped.spec.axis.name}" → chip "${mapped.chip.text}": ${axisHits}/${uniqueVals.length} options selected`);
       await logVariationStep('variationBuilder:axisFilled', {
         axis: mapped.spec.axis.name,
@@ -5114,6 +5136,7 @@
 
       let saveCloseBtn = null;
       let pricingReady = false;
+      const _tContinueWaitStart = Date.now();
       for (let pollI = 0; pollI < 120; pollI++) { // 30s max (250ms * 120)
         await sleep(250);
         saveCloseBtn = findSaveAndClose(activeDoc) || findSaveAndClose(document);
@@ -5140,8 +5163,8 @@
       }
       
       if (saveCloseBtn) {
-        console.warn('[DropFlow] Builder photo/pricing page detected (Save and close found)');
-        await logVariationStep('variationBuilder:pricingPageDetected', {});
+        console.warn(`[DropFlow] ⏱ Builder photo/pricing page detected after ${Date.now() - _tContinueWaitStart}ms (Save and close found)`);
+        await logVariationStep('variationBuilder:pricingPageDetected', { waitMs: Date.now() - _tContinueWaitStart });
         
         // Clear UPC fields by selecting "Does not apply" from dropdown
         try {
