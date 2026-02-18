@@ -3803,6 +3803,7 @@
       }
       // Handle any confirmation dialogs (e.g., "Delete variations - Are you sure?")
       await dismissVariationDialogs();
+      builderRoot = findBuilderRoot();
       const stillExists = readAttributeChips().some(c => c.norm === chip.norm);
       return !stillExists;
     };
@@ -3976,8 +3977,12 @@
       const isAddOwnInputVisible = (dialogEl, ownEntry = null) =>
         getAddOwnInputs(dialogEl, ownEntry).length > 0;
 
-      const didCreateAxisChip = () =>
-        readAttributeChips().some(c => matchesAlias(c.norm, spec, true) || c.norm === norm(axisLabel));
+      const didCreateAxisChip = () => {
+        // Refresh builderRoot before reading chips — React re-renders after Save
+        // can detach the old root from the DOM, causing queries to return empty.
+        builderRoot = findBuilderRoot();
+        return readAttributeChips().some(c => matchesAlias(c.norm, spec, true) || c.norm === norm(axisLabel));
+      };
 
       // Pre-check: if the attribute chip already exists (e.g. from a previous session
       // or because the attribute was pre-checked in the dialog), skip the dialog entirely.
@@ -6969,36 +6974,21 @@
         }
 
         if (dataUrl) {
-          // Upload via media API
-          const file = dataUrlToFile(dataUrl, `variation-${val.name.replace(/\s+/g, '-')}.jpg`);
-          for (const endpoint of uploadEndpoints) {
-            try {
-              const formData = new FormData();
-              formData.append('file', file, file.name);
-              const resp = await fetch(endpoint, {
-                method: 'POST', headers, body: formData, credentials: 'include'
-              });
-              if (resp.ok) {
-                const data = await resp.json().catch(() => null);
-                const picUrl = data?.url || data?.imageUrl || data?.pictureUrl ||
-                               data?.imageURL || data?.pictureURL ||
-                               data?.image?.url || data?.data?.url;
-                if (picUrl) {
-                  uploadedUrl = picUrl;
-                  break;
-                }
-              }
-            } catch (_) {}
-          }
+          // Upload via service worker proxy (avoids CORS — SW has host_permissions)
+          try {
+            const resp = await sendMessageSafe({
+              type: 'UPLOAD_EBAY_IMAGE', imageDataUrl: dataUrl,
+              filename: `variation-${val.name.replace(/\s+/g, '-')}.jpg`
+            }, 20000);
+            if (resp?.success && resp.imageUrl) uploadedUrl = resp.imageUrl;
+          } catch (_) {}
 
-          // Fallback: try service worker proxy
+          // Fallback: try EPS upload (same-origin XHR) to get eBay-hosted URL
           if (!uploadedUrl) {
             try {
-              const resp = await sendMessageSafe({
-                type: 'UPLOAD_EBAY_IMAGE', imageDataUrl: dataUrl,
-                filename: `variation-${val.name.replace(/\s+/g, '-')}.jpg`
-              }, 20000);
-              if (resp?.success && resp.imageUrl) uploadedUrl = resp.imageUrl;
+              const file = dataUrlToFile(dataUrl, `variation-${val.name.replace(/\s+/g, '-')}.jpg`);
+              const epsUrls = await uploadFilesToEpsForUrls([file]);
+              if (epsUrls.length > 0) uploadedUrl = epsUrls[0];
             } catch (_) {}
           }
         }
@@ -8797,9 +8787,9 @@
       return true;
     }
 
-    // Fallback: try draft API PUT with the EPS URLs
-    console.log(`[DropFlow] EPS direct: Helix association failed, trying draft API PUT...`);
-    return uploadedUrls.length > 0;
+    // Helix association failed — return false so caller can try Method 6 (EPS + draft PUT)
+    console.warn(`[DropFlow] EPS direct: Helix association failed, deferring to next method`);
+    return false;
   }
 
   /**
@@ -8923,94 +8913,26 @@
   async function uploadViaEbayMediaApi(files, ebayContext) {
     if (!ebayContext || !ebayContext.headers) return false;
 
-    const host = location.host; // e.g. www.ebay.com
     const uploadedPictures = [];
 
-    // Try the captured media upload URL first, then known patterns
-    const uploadEndpoints = [];
-    if (ebayContext.mediaUploadUrl) {
-      uploadEndpoints.push(ebayContext.mediaUploadUrl);
-    }
-    uploadEndpoints.push(
-      `https://${host}/sell/media/api/image`,
-      `https://${host}/sell/media/imageUpload`,
-      `https://${host}/sell/media/upload/image`
-    );
-    if (ebayContext.draftId) {
-      uploadEndpoints.push(`https://${host}/lstng/api/listing_draft/${ebayContext.draftId}/image`);
-    }
-
-    // Filter out Content-Type from captured headers (FormData needs its own boundary)
-    const headers = {};
-    for (const [key, value] of Object.entries(ebayContext.headers)) {
-      if (key.toLowerCase() !== 'content-type') {
-        headers[key] = value;
-      }
-    }
-
+    // Upload via service worker proxy (avoids CORS — SW has host_permissions + cookies)
+    console.log(`[DropFlow] Uploading ${files.length} images via service worker proxy...`);
     for (let i = 0; i < files.length; i++) {
-      let uploaded = false;
-
-      for (const endpoint of uploadEndpoints) {
-        if (uploaded) break;
-        try {
-          const formData = new FormData();
-          formData.append('file', files[i], files[i].name);
-
-          const resp = await fetch(endpoint, {
-            method: 'POST',
-            headers,
-            body: formData,
-            credentials: 'include'
-          });
-
-          if (resp.ok) {
-            const data = await resp.json().catch(() => null);
-            if (data) {
-              // eBay may return the image URL/ID in various formats
-              const picUrl = data.url || data.imageUrl || data.pictureUrl ||
-                             data.imageURL || data.pictureURL ||
-                             (data.image && (data.image.url || data.image.imageUrl)) ||
-                             (data.data && (data.data.url || data.data.imageUrl));
-              if (picUrl) {
-                uploadedPictures.push(picUrl);
-                uploaded = true;
-                console.log(`[DropFlow] Image ${i + 1} uploaded via media API: ${picUrl.substring(0, 60)}`);
-              } else {
-                // Store raw response for debug
-                console.log(`[DropFlow] Media API response (no URL found):`, JSON.stringify(data).substring(0, 200));
-              }
-            }
-          } else if (resp.status !== 404) {
-            // Log non-404 errors (404 just means wrong endpoint)
-            const text = await resp.text().catch(() => '');
-            console.warn(`[DropFlow] Media API ${resp.status} from ${endpoint}:`, text.substring(0, 100));
-          }
-        } catch (e) {
-          // Endpoint doesn't exist or CORS issue â€" try next
+      try {
+        const dataUrl = await fileToDataUrl(files[i]);
+        const resp = await sendMessageSafe({
+          type: 'UPLOAD_EBAY_IMAGE',
+          imageDataUrl: dataUrl,
+          filename: files[i].name
+        }, 20000);
+        if (resp && resp.success && resp.imageUrl) {
+          uploadedPictures.push(resp.imageUrl);
+          console.log(`[DropFlow] Image ${i + 1} uploaded via SW proxy: ${resp.imageUrl.substring(0, 60)}`);
+        } else {
+          console.warn(`[DropFlow] SW proxy upload ${i + 1} failed:`, resp?.error);
         }
-      }
-    }
-
-    // If same-origin uploads failed, try via service worker proxy
-    if (uploadedPictures.length === 0) {
-      console.log('[DropFlow] Same-origin media upload failed, trying service worker proxy...');
-      for (let i = 0; i < files.length; i++) {
-        try {
-          // Convert File back to data URL for message passing
-          const dataUrl = await fileToDataUrl(files[i]);
-          const resp = await sendMessageSafe({
-            type: 'UPLOAD_EBAY_IMAGE',
-            imageDataUrl: dataUrl,
-            filename: files[i].name
-          }, 20000);
-          if (resp && resp.success && resp.imageUrl) {
-            uploadedPictures.push(resp.imageUrl);
-            console.log(`[DropFlow] Image ${i + 1} uploaded via SW proxy: ${resp.imageUrl.substring(0, 60)}`);
-          }
-        } catch (e) {
-          console.warn(`[DropFlow] SW proxy upload ${i + 1} failed:`, e.message);
-        }
+      } catch (e) {
+        console.warn(`[DropFlow] SW proxy upload ${i + 1} failed:`, e.message);
       }
     }
 

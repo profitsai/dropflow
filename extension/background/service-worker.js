@@ -3510,8 +3510,16 @@ async function handleUploadEbayImage(payload, sender) {
         const resp = await fetch(endpoint, {
           method: 'POST',
           headers,
-          body: formData
+          body: formData,
+          credentials: 'include',
+          redirect: 'manual'
         });
+
+        // If eBay redirects (e.g. to /n/error), skip this endpoint
+        if (resp.type === 'opaqueredirect' || resp.status === 301 || resp.status === 302 || resp.status === 303 || resp.status === 307 || resp.status === 308) {
+          console.warn(`[DropFlow] Upload endpoint redirected (${resp.status || 'opaque'}): ${endpoint}`);
+          continue;
+        }
 
         if (resp.ok) {
           const data = await resp.json().catch(() => null);
