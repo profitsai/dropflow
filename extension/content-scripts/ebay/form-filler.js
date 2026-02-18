@@ -319,23 +319,68 @@
    * Polls for key elements (title input, price input, photo upload area).
    * Returns true if form is ready, false if timed out.
    */
-  async function waitForFormReady(timeoutMs = 15000) {
+  /**
+   * Find a title input across shadow DOM, iframes, and regular DOM.
+   * Returns the first visible/enabled input found, or null.
+   */
+  function findTitleInput() {
+    // Strategy 1: standard DOM selectors (fastest, works for most eBay forms)
+    const byAttr = document.querySelector('.smry.summary__title input[name="title"]') ||
+                   document.querySelector('input[name="title"]') ||
+                   document.querySelector('[data-testid="title-input"]') ||
+                   document.querySelector('[aria-label*="title" i]:not([aria-label*="search" i])') ||
+                   document.querySelector('input[placeholder*="title" i]') ||
+                   document.querySelector('input[maxlength="80"]');  // eBay title is always max 80
+    if (byAttr) return byAttr;
+
+    // Strategy 2: shadow DOM traversal (eBay uses web components on some pages)
+    const shadowResults = queryAllWithShadow('input[name="title"], [data-testid="title-input"], input[aria-label*="title" i]');
+    if (shadowResults.length > 0) return shadowResults[0];
+
+    // Strategy 3: label-based search — find the input associated with a "Title" label
+    const allLabels = document.querySelectorAll('label');
+    for (const label of allLabels) {
+      if (/^title$/i.test(label.textContent.trim())) {
+        const forId = label.getAttribute('for');
+        if (forId) {
+          const input = document.getElementById(forId);
+          if (input && (input.tagName === 'INPUT' || input.tagName === 'TEXTAREA')) return input;
+        }
+        const input = label.querySelector('input') || label.nextElementSibling?.querySelector?.('input');
+        if (input) return input;
+      }
+    }
+
+    return null;
+  }
+
+  async function waitForFormReady(timeoutMs = 15000, hasVariations = false) {
     const startTime = Date.now();
     const pollInterval = 500;
 
     const selectors = {
-      title: 'input[name="title"], [data-testid="title-input"], input[placeholder*="title" i]',
+      // Expanded title selector: name, testid, aria-label, placeholder, or maxlength=80 (eBay's title limit)
+      title: 'input[name="title"], [data-testid="title-input"], input[aria-label*="title" i]:not([aria-label*="search" i]), input[placeholder*="title" i], input[maxlength="80"]',
       price: 'input[name="price"], [data-testid="price-input"] input, input[placeholder*="price" i]',
       photos: 'input[type="file"][accept*="image"], input[type="file"][multiple], input[type="file"], [class*="photo-upload"], [class*="image-upload"], [data-testid="image-upload"]'
     };
 
     while (Date.now() - startTime < timeoutMs) {
-      const titleEl = document.querySelector(selectors.title);
+      const titleEl = document.querySelector(selectors.title) || findTitleInput();
       const priceEl = document.querySelector(selectors.price);
       const photoEl = document.querySelector(selectors.photos);
 
       const found = [titleEl && 'title', priceEl && 'price', photoEl && 'photos'].filter(Boolean);
 
+      // Return true when title is found.
+      // For variations products, price input may not appear in the main form (it's per-SKU),
+      // so don't require it — waiting for price would always time out on variations listings.
+      if (titleEl && (priceEl || hasVariations)) {
+        console.log(`[DropFlow] Form ready (${found.join(', ')} found) after ${Date.now() - startTime}ms`);
+        return true;
+      }
+
+      // Also return true if we have BOTH title AND price (non-variations)
       if (titleEl && priceEl) {
         console.log(`[DropFlow] Form ready (${found.join(', ')} found) after ${Date.now() - startTime}ms`);
         return true;
@@ -344,7 +389,9 @@
       await sleep(pollInterval);
     }
 
-    console.warn(`[DropFlow] Form ready timeout after ${timeoutMs}ms â€" proceeding anyway`);
+    const lastTitle = document.querySelector(selectors.title);
+    const lastPrice = document.querySelector(selectors.price);
+    console.warn(`[DropFlow] Form ready timeout after ${timeoutMs}ms — proceeding anyway (title=${!!lastTitle}, price=${!!lastPrice})`);
     return false;
   }
 
@@ -361,6 +408,17 @@
       try { await chrome.storage.local.set({ _dropflow_fillform_trace: _dfSteps }); } catch(_) {}
     }
     await _dfLog('ENTER', 'url=' + window.location.href.substring(0, 60));
+    // Log what product data is available — essential for diagnosing fill failures
+    await _dfLog('PRODUCT_DATA', [
+      `title="${(productData.ebayTitle || productData.title || '').substring(0, 50)}"`,
+      `ebayPrice=${productData.ebayPrice}`,
+      `hasVars=${!!productData.variations?.hasVariations}`,
+      `skus=${productData.variations?.skus?.length ?? 0}`,
+      `descLen=${(productData.description || '').length}`,
+      `aiDescLen=${(productData.aiDescription || '').length}`,
+      `bulletPts=${(productData.bulletPoints || []).length}`,
+      `images=${(productData.images || []).length}`
+    ].join(', '));
     const results = {
       title: false,
       price: false,
@@ -404,8 +462,11 @@
       }
 
       // 0b. Wait for form to render, then scroll to trigger lazy-loading
-      await _dfLog('STEP0', 'waitForFormReady...');
-      await waitForFormReady(15000);
+      // Pass hasVariations so waitForFormReady doesn't require a price input for variations products
+      // (variations listings don't have a single price input — price is per-SKU in the builder)
+      const _hasVarsEarly = !!productData.variations?.hasVariations;
+      await _dfLog('STEP0', `waitForFormReady (hasVariations=${_hasVarsEarly})...`);
+      await waitForFormReady(15000, _hasVarsEarly);
       await _dfLog('STEP0', 'scrollPageToLoadAll...');
       await scrollPageToLoadAll();
       await _dfLog('STEP0', 'scroll done');
@@ -415,20 +476,32 @@
       //     We fetch early so they're ready by the time we need them for description/specifics.
       let ebayContext = await getEbayHeaders();
 
-      // 1. Fill title
+      // 1. Fill title — retry up to 3 times (2s gap) to handle slow SPA rendering
       await sleep(500);
-      const titleInput = document.querySelector('.smry.summary__title input[name="title"]') ||
-                         document.querySelector('input[name="title"]') ||
-                         document.querySelector('[data-testid="title-input"]') ||
-                         document.querySelector('input[placeholder*="title" i]');
+      let titleInput = null;
+      for (let titleAttempt = 1; titleAttempt <= 3; titleAttempt++) {
+        titleInput = findTitleInput();
+        if (titleInput) break;
+        await _dfLog('TITLE_SEARCH', `attempt ${titleAttempt}/3 — input not found yet`);
+        console.warn(`[DropFlow] Title input not found (attempt ${titleAttempt}/3), waiting 2s...`);
+        await sleep(2000);
+      }
       if (titleInput) {
         await scrollToAndWait(titleInput, 300);
         const title = productData.ebayTitle || productData.title || '';
+        if (!title) {
+          console.warn('[DropFlow] ⚠ productData has no title (ebayTitle and title are both empty)!');
+        }
         results.title = await commitInputValue(titleInput, title.substring(0, 80));
-        await _dfLog("TITLE", "committed"); console.log(`[DropFlow] Title committed: "${title.substring(0, 40)}..."`);
+        await _dfLog('TITLE', `committed "${title.substring(0, 50)}"`);
+        console.log(`[DropFlow] Title committed: "${title.substring(0, 40)}..."`);
 
-        // API PUT fallback for title
-        if (ebayContext && ebayContext.draftId) {
+        // API PUT fallback for title — bypasses React state entirely
+        // Also try extracting draftId from URL if intercepted headers didn't supply it
+        if (ebayContext && !ebayContext.draftId) {
+          ebayContext.draftId = extractDraftIdFromUrl();
+        }
+        if (ebayContext?.draftId) {
           try {
             await putDraftField({ title: title.substring(0, 80) }, ebayContext);
             results.title = true;
@@ -437,19 +510,24 @@
             console.warn('[DropFlow] Title PUT fallback failed:', e.message);
           }
         }
+      } else {
+        await _dfLog('TITLE', 'ERROR — input not found after 3 attempts (selectors may not match eBay AU form)');
+        console.error('[DropFlow] ❌ Title input NOT FOUND after 3 attempts — title will not be filled!');
       }
 
       // 2. Fill price if ebayPrice was calculated (from markup settings)
-      // Skip if variations exist â€" each SKU has its own price set in fillVariations()
-      // Skip if 0 â€" means the scraper couldn't extract a real price
+      // Skip if variations exist — each SKU has its own price set in fillVariations()
+      // Skip if 0 — means the scraper couldn't extract a real price
       const hasVariations = productData.variations?.hasVariations;
+      await _dfLog('STEP2', `price fill (hasVariations=${hasVariations}, ebayPrice=${productData.ebayPrice})`);
       if (!hasVariations && productData.ebayPrice != null && productData.ebayPrice > 0) {
         let priceInput = null;
         for (let priceAttempt = 1; priceAttempt <= 3; priceAttempt++) {
           priceInput = document.querySelector('input[name="price"]') ||
                        document.querySelector('[data-testid="price-input"] input') ||
                        document.querySelector('input[placeholder*="price" i]') ||
-                       document.querySelector('.smry input[type="text"][name="price"]');
+                       document.querySelector('.smry input[type="text"][name="price"]') ||
+                       document.querySelector('input[aria-label*="price" i]');
           if (priceInput) break;
           console.warn(`[DropFlow] Price input not found, attempt ${priceAttempt}/3...`);
           await sleep(2000);
@@ -457,13 +535,18 @@
         if (priceInput) {
           await scrollToAndWait(priceInput, 300);
           results.price = await commitInputValue(priceInput, String(productData.ebayPrice));
-          await _dfLog("PRICE", "committed"); console.log(`[DropFlow] Price committed (DOM): $${productData.ebayPrice}`);
+          await _dfLog('PRICE', `committed $${productData.ebayPrice}`);
+          console.log(`[DropFlow] Price committed (DOM): $${productData.ebayPrice}`);
         } else {
-          console.warn('[DropFlow] Price input not found after 3 attempts');
+          await _dfLog('PRICE', 'ERROR — input not found after 3 attempts');
+          console.warn('[DropFlow] ❌ Price input not found after 3 attempts');
         }
 
-        // API PUT fallback â€" commit price server-side to bypass React state
-        if (ebayContext && ebayContext.draftId) {
+        // API PUT fallback — commit price server-side to bypass React state
+        if (ebayContext && !ebayContext.draftId) {
+          ebayContext.draftId = extractDraftIdFromUrl();
+        }
+        if (ebayContext?.draftId) {
           try {
             const putSuccess = await putDraftField({
               price: { value: String(productData.ebayPrice) }
@@ -476,6 +559,10 @@
             console.warn('[DropFlow] Price PUT fallback failed:', e.message);
           }
         }
+      } else if (hasVariations) {
+        await _dfLog('PRICE', 'skipped (variations product — price set per SKU)');
+      } else {
+        await _dfLog('PRICE', `skipped (ebayPrice=${productData.ebayPrice})`);
       }
 
       await _dfLog("STEP3", "condition..."); // 3. Set condition — may not have been set during prelist/identify flow
@@ -9235,6 +9322,38 @@
         sendResponse({ success: false, ignored: true, reason: 'subframe' });
         return true;
       }
+
+      // If we're on a prelist page (suggest/identify), we can't fill the form directly.
+      // Instead, store the product data and kick off the prelist → identify → form flow,
+      // which is the same path the bulk poster uses.
+      if (isPrelistPage()) {
+        (async () => {
+          try {
+            // Get our tab ID for the per-tab storage key
+            let tabId = null;
+            try {
+              const resp = await sendMessageSafe({ type: 'GET_TAB_ID' }, 5000);
+              tabId = resp?.tabId;
+            } catch (_) {}
+
+            const storageKey = tabId ? `pendingListing_${tabId}` : 'pendingListingData';
+            await chrome.storage.local.set({ [storageKey]: message.productData });
+            console.log(`[DropFlow] FILL_EBAY_FORM on prelist page — stored data as ${storageKey}, starting prelist flow`);
+
+            // Run the prelist search flow (type title, click search)
+            await handlePrelistPage(message.productData);
+
+            // Watch for SPA transitions through identify → form page → auto-fill
+            watchForPageTransitions(storageKey);
+
+            sendResponse({ success: true, message: 'Prelist flow started', storageKey });
+          } catch (error) {
+            sendResponse({ success: false, error: error.message });
+          }
+        })();
+        return true;
+      }
+
       fillForm(message.productData).then(results => {
         sendResponse({ success: true, results });
       }).catch(error => {
