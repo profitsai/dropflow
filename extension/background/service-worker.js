@@ -1249,14 +1249,17 @@ async function handleStartAliBulkListing(payload) {
     return { error: 'AliExpress bulk listing already running' };
   }
 
-  const { links, threadCount = 3, minPrice, maxPrice, listingType = 'standard', ebayDomain = 'www.ebay.com' } = payload;
+  const { links, threadCount = 3, minPrice, maxPrice, listingType = 'standard', ebayDomain } = payload;
+
+  // Resolve eBay domain: use payload override, or read from settings, or default to com.au
+  const resolvedDomain = ebayDomain || ('www.ebay.' + await getEbayDomain());
 
   aliBulkRunning = true;
   aliBulkPaused = false;
   aliBulkAbort = false;
   startSWKeepAlive();
 
-  runAliBulkListing(links, { threadCount, minPrice, maxPrice, listingType, ebayDomain })
+  runAliBulkListing(links, { threadCount, minPrice, maxPrice, listingType, ebayDomain: resolvedDomain })
     .catch((err) => {
       console.error('[DropFlow Ali] Bulk listing crashed:', err?.message || err);
     });
@@ -1265,7 +1268,7 @@ async function handleStartAliBulkListing(payload) {
 }
 
 async function runAliBulkListing(links, options) {
-  const { threadCount = 3, minPrice, maxPrice, listingType, ebayDomain = 'www.ebay.com' } = options;
+  const { threadCount = 3, minPrice, maxPrice, listingType, ebayDomain = 'www.ebay.com.au' } = options;
   const results = [];
   let completed = 0;
   const sem = semaphore(threadCount);
