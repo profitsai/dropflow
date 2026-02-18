@@ -709,10 +709,23 @@
       }
 
       // 5c. Fill the variation combinations table with per-SKU prices and quantities.
-      // This table appears AFTER the builder iframe flow completes and closes.
-      // Runs regardless of whether fillVariations() reported success, because the
-      // builder (in the subframe) may have succeeded while the parent frame timed out.
+      // Bug fix: wait for the builder to be fully closed before polling for the table.
+      // The combinations table only appears AFTER the builder iframe finishes and closes.
+      // Previously this ran while the builder was still open, so the 15s poll always timed out.
       if (hasVariations && productData.variations?.skus?.length > 0) {
+        // Wait for the MSKU builder / variation builder to be gone before polling for the table.
+        {
+          const BUILDER_GONE_MAX = 60; // up to 30s
+          for (let bg = 0; bg < BUILDER_GONE_MAX; bg++) {
+            const ctx = detectVariationBuilderContext();
+            const mskuFrame = findMskuBulkeditIframe();
+            if (!ctx.isBuilder && !mskuFrame) break;
+            if (bg === 0) console.log('[DropFlow] 5c: waiting for builder/MSKU iframe to close before combinations table...');
+            await sleep(500);
+          }
+          // Extra settle time for eBay to render the combinations table after builder closes
+          await sleep(1500);
+        }
         try {
           const comboResult = await fillVariationCombinationsTable(productData);
           if (comboResult.success) {
@@ -727,17 +740,19 @@
         }
       }
 
-      // 5c½. Draft API per-variant pricing — bypasses DOM/iframe entirely.
-      // This is the MOST RELIABLE approach since it avoids cross-origin iframe issues.
-      // Runs after the builder has created variation structure in the draft.
-      if (hasVariations && productData.variations?.skus?.length > 0 && ebayContext?.draftId) {
+      // 5c½. Draft API per-variant pricing — FALLBACK only if DOM combinations table failed.
+      // The Draft API has been failing with "Failed to fetch" network errors.
+      // DOM-based pricing (fillCombinationsTable above) is now the primary path.
+      // Only attempt the Draft API if the DOM method did not succeed.
+      if (hasVariations && productData.variations?.skus?.length > 0 && !results.variationPrices && ebayContext?.draftId) {
+        console.log('[DropFlow] DOM combinations table did not succeed — falling back to Draft API pricing');
         try {
           const draftPriceResult = await putVariationPricesViaDraftAPI(productData, ebayContext);
           if (draftPriceResult.success) {
             results.variationPrices = true;
-            console.log(`[DropFlow] ✅ Draft API variation pricing: ${draftPriceResult.pricedCount} variants priced`);
+            console.log(`[DropFlow] ✅ Draft API variation pricing (fallback): ${draftPriceResult.pricedCount} variants priced`);
           } else {
-            console.warn('[DropFlow] Draft API variation pricing did not succeed — DOM prices may still apply');
+            console.warn('[DropFlow] Draft API variation pricing fallback also failed — prices may be unset');
           }
         } catch (err) {
           console.error('[DropFlow] putVariationPricesViaDraftAPI error:', err);
@@ -3451,8 +3466,12 @@
         // options). Using a custom "Color" attribute is far more reliable.
         ['style'].forEach(v => soft.add(norm(v)));
       } else if (n === 'size') {
-        ['size', 'dogsize', 'petsize', 'garmentsize', 'apparelsize', 'ussize', 'uksize', 'eusize', 'ausize']
-          .forEach(v => strict.add(norm(v)));
+        // Only include the exact attribute name "size" as a strict alias.
+        // Compound eBay attributes like "Dog Size", "Pet Size", "Garment Size" are
+        // entirely different attributes and must NOT match our "Size" axis.
+        // With the space-stripping norm, "Dog Size" → "dogsize" which would have
+        // wrongly matched "dogsize" in the old alias list.
+        ['size'].forEach(v => strict.add(norm(v)));
       }
       for (const v of strict) soft.add(v);
       return { strict, soft };
@@ -4580,9 +4599,12 @@
       desiredAxes: desiredAxes.map(a => a.name)
     });
 
-    // Selective reset: only remove chips that DON'T match any desired axis.
-    // Built-in attributes like "Dog Size" map to our "Size" axis - keep them.
-    // Only remove truly unrelated chips (Gender, etc.).
+    // Selective reset: only keep chips that EXACTLY match a desired axis (or are close synonyms).
+    // "Dog Size" must NOT be treated as a match for "Size" — they are different eBay attributes.
+    // Compound attribute names are stripped of non-alphanumeric chars by norm(), so "Dog Size"
+    // becomes "dogsize" which used to match "dogsize" in the alias list. That bug is now fixed:
+    // strict aliases for "size" only include "size", so "Dog Size" will be removed here and the
+    // correct "Size" attribute will be added from the +Add menu instead.
     {
       const initialMapped = mapSpecsToChips(chips);
       const keepNorms = new Set(initialMapped.map(m => m.chip.norm));
