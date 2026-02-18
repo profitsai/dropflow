@@ -1474,7 +1474,8 @@
       'color': ['colour', 'main colour', 'main color'],
       'colour': ['color', 'main color', 'main colour'],
       'size': ['garment size', 'us size', 'uk size', 'eu size', 'au size', 'shoe size'],
-      'material': ['upper material', 'outer shell material', 'fabric type'],
+      'material': ['upper material', 'outer shell material', 'fabric type', 'compatible model'],
+      'compatible model': ['model', 'device model', 'phone model'],
       'style': ['style code', 'type'],
       'pattern': ['design'],
       'length': ['sleeve length', 'dress length']
@@ -1489,7 +1490,11 @@
     // Blacklist: eBay labels that should never be matched as variation axes.
     // "Features" is a predefined attribute on some categories (e.g., dog collars)
     // that only accepts a small set of values — not suitable for color/size axes.
-    const blacklistedLabels = new Set(['features', 'department', 'occasion', 'season', 'theme']);
+    // "Character" / "Character Family" are for licensed merchandise, not device models or colors.
+    const blacklistedLabels = new Set([
+      'features', 'department', 'occasion', 'season', 'theme',
+      'character', 'character family', 'franchise'
+    ]);
 
     // Partial match — axis name contained in label or vice versa
     const partial = specificLabels.find(l => {
@@ -3267,16 +3272,47 @@
   async function runVariationBuilderPageFlow(productData, axisMapping = [], builderDoc = null) {
     const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
     const sleepShort = () => sleep(250);
+
+    // Attributes that should NEVER be used as variation axes in the builder.
+    // "Character" and "Character Family" are eBay attributes for licensed merchandise
+    // (e.g., Disney, Marvel) — not suitable for color/size/model axes.
+    const BUILDER_AXIS_BLACKLIST = new Set([
+      'character', 'characterfamily', 'theme', 'franchise',
+      'features', 'department', 'occasion', 'season'
+    ]);
+
+    // Detect if axis values look like device/phone model names and remap axis name.
+    // AliExpress often labels phone model axes as "Material" or "Ships From".
+    const inferAxisNameFromValues = (axisName, values) => {
+      const lower = (axisName || '').toLowerCase().trim();
+      // Only remap generic names that are clearly wrong for the values
+      if (!['material', 'type', 'model', 'specification', 'specs'].includes(lower)) return axisName;
+      if (!values || values.length < 2) return axisName;
+      const valStrings = values.map(v => String(v?.name || v || '').toLowerCase());
+      // Check if values look like phone/device models
+      const deviceModelPattern = /\b(iphone|samsung|galaxy|pixel|huawei|xiaomi|redmi|oppo|oneplus|ipad|macbook|airpods)\b/i;
+      const modelHits = valStrings.filter(v => deviceModelPattern.test(v)).length;
+      if (modelHits >= Math.ceil(values.length * 0.4)) {
+        console.warn(`[DropFlow] Axis "${axisName}" values look like device models (${modelHits}/${values.length} match) → remapping to "Compatible Model"`);
+        return 'Compatible Model';
+      }
+      return axisName;
+    };
+
     const desiredAxes = (axisMapping.length > 0
       ? axisMapping.map(m => ({ name: m.ebayLabel || m.axis?.name || '', values: m.axis?.values || [] }))
       : sanitizeVariationAxes(productData?.variations?.axes || []).map(a => ({ name: a.name, values: a.values || [] }))
     )
       .filter(a => a.name)
       .slice(0, 2)
-      .map(a => ({
-        name: normalizeVariationAxisName(a.name),
-        values: (a.values || []).map(v => String(v?.name || v || '').trim()).filter(Boolean)
-      }))
+      .map(a => {
+        const rawName = normalizeVariationAxisName(a.name);
+        const values = (a.values || []).map(v => String(v?.name || v || '').trim()).filter(Boolean);
+        return {
+          name: inferAxisNameFromValues(rawName, values),
+          values
+        };
+      })
       .sort((a, b) => (/size/i.test(b.name) ? 1 : 0) - (/size/i.test(a.name) ? 1 : 0));
 
     if (desiredAxes.length === 0) {
@@ -3498,6 +3534,12 @@
         // With the space-stripping norm, "Dog Size" → "dogsize" which would have
         // wrongly matched "dogsize" in the old alias list.
         ['size'].forEach(v => strict.add(norm(v)));
+      } else if (n === 'compatiblemodel') {
+        // "Compatible Model" is the eBay attribute for phone/device model variations.
+        // This axis is created when AliExpress "Material" values are detected as
+        // device model names (e.g., "For iPhone 15 Pro") by inferAxisNameFromValues.
+        ['compatiblemodel', 'model'].forEach(v => strict.add(norm(v)));
+        ['devicemodel', 'phonemodel'].forEach(v => soft.add(norm(v)));
       }
       for (const v of strict) soft.add(v);
       return { strict, soft };
@@ -4035,6 +4077,8 @@
           if (e === state.ownEntryNow || e.cb === state.ownEntryNow?.cb) return false;
           if (/add\s+your\s+own/i.test(e.txt)) return false;
           const entryNorm = norm(e.txt);
+          // Never select blacklisted attributes (Character, Character Family, etc.)
+          if (BUILDER_AXIS_BLACKLIST.has(entryNorm)) return false;
           return spec.strict.has(entryNorm) || spec.soft.has(entryNorm);
         });
         if (builtInEntry) {
@@ -4630,15 +4674,17 @@
 
     // Align existing builder attribute chips with AliExpress variation axes.
     const mapSpecsToChips = (sourceChips) => {
+      // Filter out blacklisted chips — these should never be mapped to any axis
+      const validChips = sourceChips.filter(c => !BUILDER_AXIS_BLACKLIST.has(c.norm));
       const mapped = [];
       const usedNorms = new Set();
       for (const spec of axisSpecs) {
-        let chip = sourceChips.find(c => !usedNorms.has(c.norm) && matchesAlias(c.norm, spec, false)) ||
-                   sourceChips.find(c => !usedNorms.has(c.norm) && matchesAlias(c.norm, spec, true)) ||
+        let chip = validChips.find(c => !usedNorms.has(c.norm) && matchesAlias(c.norm, spec, false)) ||
+                   validChips.find(c => !usedNorms.has(c.norm) && matchesAlias(c.norm, spec, true)) ||
                    null;
         if (!chip && /color|colour/i.test(spec.axis.name)) {
           // "features" excluded — it's a generic eBay attribute that doesn't carry colour semantics
-          chip = sourceChips.find(c => !usedNorms.has(c.norm) && /(style|colour|color)/.test(c.norm)) || null;
+          chip = validChips.find(c => !usedNorms.has(c.norm) && /(style|colour|color)/.test(c.norm)) || null;
         }
         if (!chip) continue;
         usedNorms.add(chip.norm);

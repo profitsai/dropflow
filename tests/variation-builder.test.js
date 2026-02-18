@@ -12,6 +12,12 @@ import { JSDOM } from 'jsdom';
 
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 
+// Blacklisted attributes that should never be used as variation axes
+const BUILDER_AXIS_BLACKLIST = new Set([
+  'character', 'characterfamily', 'theme', 'franchise',
+  'features', 'department', 'occasion', 'season'
+]);
+
 function getAxisAliasSpec(axisName) {
   const n = norm(axisName);
   const strict = new Set([n]);
@@ -21,9 +27,26 @@ function getAxisAliasSpec(axisName) {
     ['style'].forEach(v => soft.add(norm(v)));
   } else if (n === 'size') {
     ['size'].forEach(v => strict.add(norm(v)));
+  } else if (n === 'compatiblemodel') {
+    ['compatiblemodel', 'model'].forEach(v => strict.add(norm(v)));
+    ['devicemodel', 'phonemodel'].forEach(v => soft.add(norm(v)));
   }
   for (const v of strict) soft.add(v);
   return { strict, soft };
+}
+
+// Detect if axis values look like device/phone model names and remap axis name.
+function inferAxisNameFromValues(axisName, values) {
+  const lower = (axisName || '').toLowerCase().trim();
+  if (!['material', 'type', 'model', 'specification', 'specs'].includes(lower)) return axisName;
+  if (!values || values.length < 2) return axisName;
+  const valStrings = values.map(v => String(v?.name || v || '').toLowerCase());
+  const deviceModelPattern = /\b(iphone|samsung|galaxy|pixel|huawei|xiaomi|redmi|oppo|oneplus|ipad|macbook|airpods)\b/i;
+  const modelHits = valStrings.filter(v => deviceModelPattern.test(v)).length;
+  if (modelHits >= Math.ceil(values.length * 0.4)) {
+    return 'Compatible Model';
+  }
+  return axisName;
 }
 
 const matchesAlias = (chipNorm, aliasSpec, useSoft = false) =>
@@ -733,5 +756,171 @@ describe('Variation value parenthetical stripping', () => {
     expect(strip('M (5-10kg)')).toBe('M');
     expect(strip('Large (New Season)')).toBe('Large');
     expect(strip('Red')).toBe('Red');
+  });
+});
+
+// ── Phone accessories axis mapping tests ───────────────────────────────────
+
+describe('inferAxisNameFromValues — device model detection', () => {
+  it('remaps "Material" to "Compatible Model" when values are phone models', () => {
+    const values = [
+      'For iPhone 15 Pro', 'For iPhone 16', 'For iPhone 14 Plus',
+      'For iPhone 15 Pro Max', 'For Samsung Galaxy S24'
+    ];
+    expect(inferAxisNameFromValues('Material', values)).toBe('Compatible Model');
+  });
+
+  it('keeps "Material" when values are actual materials', () => {
+    const values = ['Cotton', 'Polyester', 'Silk', 'Linen'];
+    expect(inferAxisNameFromValues('Material', values)).toBe('Material');
+  });
+
+  it('keeps "Material" when values are mixed but below threshold', () => {
+    const values = ['Leather', 'Silicone', 'TPU', 'Plastic', 'Metal', 'For iPhone 15'];
+    // 1/6 = 16% < 40% threshold
+    expect(inferAxisNameFromValues('Material', values)).toBe('Material');
+  });
+
+  it('remaps "Type" to "Compatible Model" when values are device models', () => {
+    const values = ['For Samsung Galaxy S24', 'For Samsung Galaxy S23', 'For Samsung Galaxy A54'];
+    expect(inferAxisNameFromValues('Type', values)).toBe('Compatible Model');
+  });
+
+  it('does not remap "Color" even if values mention phones', () => {
+    const values = ['iPhone Blue', 'Galaxy Green'];
+    expect(inferAxisNameFromValues('Color', values)).toBe('Color');
+  });
+
+  it('does not remap "Size" even if values mention phones', () => {
+    const values = ['iPhone 15 Pro', 'iPhone 16'];
+    expect(inferAxisNameFromValues('Size', values)).toBe('Size');
+  });
+
+  it('handles values with name property (AliExpress format)', () => {
+    const values = [
+      { name: 'For iPhone 15 Pro' }, { name: 'For iPhone 16' }, { name: 'For Pixel 8' }
+    ];
+    expect(inferAxisNameFromValues('Material', values)).toBe('Compatible Model');
+  });
+
+  it('detects various phone brands', () => {
+    const brands = ['For Huawei P60', 'For Xiaomi 14', 'For OnePlus 12', 'For Redmi Note 13', 'For OPPO Find X7'];
+    expect(inferAxisNameFromValues('Material', brands)).toBe('Compatible Model');
+  });
+});
+
+describe('getAxisAliasSpec — Compatible Model axis', () => {
+  it('has compatiblemodel and model as strict aliases', () => {
+    const spec = getAxisAliasSpec('Compatible Model');
+    expect(spec.strict.has('compatiblemodel')).toBe(true);
+    expect(spec.strict.has('model')).toBe(true);
+  });
+
+  it('has devicemodel/phonemodel as soft aliases', () => {
+    const spec = getAxisAliasSpec('Compatible Model');
+    expect(spec.soft.has('devicemodel')).toBe(true);
+    expect(spec.soft.has('phonemodel')).toBe(true);
+    // strict should NOT have soft-only aliases
+    expect(spec.strict.has('devicemodel')).toBe(false);
+  });
+});
+
+describe('BUILDER_AXIS_BLACKLIST — prevents bad attribute selection', () => {
+  it('blacklists Character and Character Family', () => {
+    expect(BUILDER_AXIS_BLACKLIST.has('character')).toBe(true);
+    expect(BUILDER_AXIS_BLACKLIST.has('characterfamily')).toBe(true);
+  });
+
+  it('blacklists theme, franchise, features', () => {
+    expect(BUILDER_AXIS_BLACKLIST.has('theme')).toBe(true);
+    expect(BUILDER_AXIS_BLACKLIST.has('franchise')).toBe(true);
+    expect(BUILDER_AXIS_BLACKLIST.has('features')).toBe(true);
+  });
+
+  it('does NOT blacklist Color, Size, Compatible Model', () => {
+    expect(BUILDER_AXIS_BLACKLIST.has('color')).toBe(false);
+    expect(BUILDER_AXIS_BLACKLIST.has('size')).toBe(false);
+    expect(BUILDER_AXIS_BLACKLIST.has('compatiblemodel')).toBe(false);
+  });
+});
+
+describe('Phone accessories scenario — end-to-end axis mapping', () => {
+  // Simulates the full flow: AliExpress axes → desiredAxes → builder chip matching
+  const phoneAccessoryScenario = () => {
+    // AliExpress product axes
+    const aliAxes = [
+      { name: 'Color', values: ['Pink', 'Blue', 'Black', 'White', 'Green'] },
+      { name: 'Material', values: [
+        { name: 'For iPhone 15 Pro' }, { name: 'For iPhone 16' },
+        { name: 'For iPhone 14 Plus' }, { name: 'For Samsung Galaxy S24' }
+      ]}
+    ];
+
+    // Step 1: infer axis names from values
+    const desiredAxes = aliAxes.map(a => ({
+      name: inferAxisNameFromValues(a.name, a.values),
+      values: a.values.map(v => String(v?.name || v || ''))
+    }));
+
+    // Step 2: create alias specs
+    const axisSpecs = desiredAxes.map(axis => ({ axis, ...getAxisAliasSpec(axis.name) }));
+
+    // Step 3: eBay builder shows these chips (pre-selected by category)
+    const ebayChips = [
+      { norm: 'character', text: 'Character' },
+      { norm: 'characterfamily', text: 'Character Family' },
+      { norm: 'color', text: 'Color' },
+      { norm: 'compatiblemodel', text: 'Compatible Model' }
+    ];
+
+    // Step 4: map specs to chips (with blacklist filtering)
+    const validChips = ebayChips.filter(c => !BUILDER_AXIS_BLACKLIST.has(c.norm));
+    const mapped = [];
+    const usedNorms = new Set();
+    for (const spec of axisSpecs) {
+      const chip = validChips.find(c => !usedNorms.has(c.norm) && matchesAlias(c.norm, spec, false)) ||
+        validChips.find(c => !usedNorms.has(c.norm) && matchesAlias(c.norm, spec, true));
+      if (chip) {
+        usedNorms.add(chip.norm);
+        mapped.push({ spec, chip });
+      }
+    }
+
+    return { desiredAxes, axisSpecs, mapped, validChips };
+  };
+
+  it('remaps Material → Compatible Model based on phone model values', () => {
+    const { desiredAxes } = phoneAccessoryScenario();
+    expect(desiredAxes[0].name).toBe('Color');
+    expect(desiredAxes[1].name).toBe('Compatible Model');
+  });
+
+  it('maps Color axis to Color chip (not Character)', () => {
+    const { mapped } = phoneAccessoryScenario();
+    const colorMapping = mapped.find(m => m.spec.axis.name === 'Color');
+    expect(colorMapping).toBeDefined();
+    expect(colorMapping.chip.text).toBe('Color');
+    expect(colorMapping.chip.text).not.toBe('Character');
+  });
+
+  it('maps Compatible Model axis to Compatible Model chip (not Character Family)', () => {
+    const { mapped } = phoneAccessoryScenario();
+    const modelMapping = mapped.find(m => m.spec.axis.name === 'Compatible Model');
+    expect(modelMapping).toBeDefined();
+    expect(modelMapping.chip.text).toBe('Compatible Model');
+    expect(modelMapping.chip.text).not.toBe('Character Family');
+  });
+
+  it('filters out Character and Character Family from valid chips', () => {
+    const { validChips } = phoneAccessoryScenario();
+    expect(validChips.map(c => c.text)).not.toContain('Character');
+    expect(validChips.map(c => c.text)).not.toContain('Character Family');
+    expect(validChips.map(c => c.text)).toContain('Color');
+    expect(validChips.map(c => c.text)).toContain('Compatible Model');
+  });
+
+  it('maps both axes successfully', () => {
+    const { mapped } = phoneAccessoryScenario();
+    expect(mapped.length).toBe(2);
   });
 });

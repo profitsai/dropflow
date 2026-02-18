@@ -1,0 +1,18 @@
+{
+  "productId": "1005006508328498",
+  "title": "",
+  "price": "",
+  "currency": "USD",
+  "imageCount": 7,
+  "sampleImages": [
+    "https://ae01.alicdn.com/kf/S01523ef93482448d8c33d410344d6a9eI/361x360.png",
+    "https://ae01.alicdn.com/kf/S1887a285b60743859ac7bdbfca5e0896Z/154x64.png",
+    "https://ae01.alicdn.com/kf/Sa7759f32a8094c98b4dbdc082a876d4dq/60x60.png"
+  ],
+  "variations": {
+    "hasVariations": false,
+    "options": []
+  },
+  "hasPageData": false,
+  "pageDataKeys": []
+}
