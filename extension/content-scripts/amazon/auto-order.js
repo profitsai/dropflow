@@ -20,18 +20,35 @@
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type !== 'DROPFLOW_AUTO_ORDER_EXECUTE') return;
 
-    const { orderId, quantity, shippingAddress } = message.data;
-    console.log('[DropFlow] Executing auto-order:', orderId, 'qty:', quantity);
+    const { orderId, quantity, shippingAddress, sourceVariant } = message.data;
+    console.log('[DropFlow] Executing auto-order:', orderId, 'qty:', quantity, 'variant:', sourceVariant);
 
-    executeOrder(orderId, quantity, shippingAddress)
+    executeOrder(orderId, quantity, shippingAddress, sourceVariant)
       .then(result => sendResponse(result))
       .catch(err => sendResponse({ error: err.message }));
 
     return true;
   });
 
-  async function executeOrder(orderId, quantity, shippingAddress) {
+  async function executeOrder(orderId, quantity, shippingAddress, sourceVariant) {
     try {
+      // Step 0: Select correct variant before anything else
+      if (sourceVariant) {
+        const variantResult = await selectVariants(sourceVariant);
+        console.log('[DropFlow] Variant selection result:', variantResult);
+        if (!variantResult.success) {
+          chrome.runtime.sendMessage({
+            type: 'AUTO_ORDER_PROGRESS',
+            data: { orderId, status: 'variant_mismatch', message: 'Could not select variant automatically. Please select manually: ' + variantResult.warnings.join('; ') }
+          });
+          return { error: 'Variant selection failed — paused for manual selection', warnings: variantResult.warnings };
+        }
+        if (variantResult.warnings.length) {
+          console.warn('[DropFlow] Variant warnings:', variantResult.warnings);
+        }
+        await sleep(1000);
+      }
+
       // Step 1: Set quantity
       await setQuantity(quantity);
       await sleep(1000);
@@ -103,6 +120,114 @@
     }
 
     throw new Error('Could not find Add to Cart or Buy Now button');
+  }
+
+  // ── Variant Selection ──────────────────────────────────────────────
+
+  function fuzzyMatch(a, b) {
+    if (!a || !b) return false;
+    const na = a.toLowerCase().trim();
+    const nb = b.toLowerCase().trim();
+    return na === nb || na.includes(nb) || nb.includes(na);
+  }
+
+  function getVariantOptions(sourceVariant) {
+    if (!sourceVariant) return [];
+    if (sourceVariant.sourceVariantText) {
+      return sourceVariant.sourceVariantText.split(/\s*[\/|,;]\s*/).map(s => s.trim()).filter(Boolean);
+    }
+    if (sourceVariant.specifics && typeof sourceVariant.specifics === 'object') {
+      const vals = Object.values(sourceVariant.specifics).filter(Boolean);
+      if (vals.length) return vals;
+    }
+    if (sourceVariant.ebayVariant) {
+      return sourceVariant.ebayVariant.split(/[,;]/).map(p => {
+        const ci = p.indexOf(':');
+        return ci >= 0 ? p.slice(ci + 1).trim() : p.trim();
+      }).filter(Boolean);
+    }
+    return [];
+  }
+
+  function findBestMatch(optionValue, candidates) {
+    if (!optionValue || !candidates.length) return null;
+    const target = optionValue.toLowerCase().trim();
+    for (const c of candidates) {
+      if (c.text.toLowerCase().trim() === target) return { element: c.element, matchType: 'exact' };
+    }
+    for (const c of candidates) {
+      if (fuzzyMatch(c.text, optionValue)) return { element: c.element, matchType: 'fuzzy' };
+    }
+    return null;
+  }
+
+  async function selectVariants(sourceVariant) {
+    const options = getVariantOptions(sourceVariant);
+    if (!options.length) return { success: true, selected: [], warnings: [] };
+
+    const selected = [];
+    const warnings = [];
+
+    for (const option of options) {
+      let matched = false;
+
+      // Button/swatch selectors
+      const buttons = document.querySelectorAll(
+        '[id^="variation_"] li, [id^="variation_"] .a-button-text, ' +
+        '.swatchAvailable, .swatchSelect, ' +
+        '#twister .a-button:not(.a-button-unavailable)'
+      );
+
+      const candidates = [];
+      for (const el of buttons) {
+        let text = el.textContent?.trim() || '';
+        if (!text) {
+          const img = el.querySelector('img');
+          text = img?.alt?.trim() || img?.title?.trim() || '';
+        }
+        if (!text) text = el.getAttribute('title')?.trim() || '';
+        if (text) candidates.push({ element: el, text });
+      }
+
+      const match = findBestMatch(option, candidates);
+      if (match) {
+        match.element.click();
+        selected.push(`${option} (${match.matchType})`);
+        matched = true;
+        await sleep(500);
+      }
+
+      if (!matched) {
+        // Try dropdown selectors
+        const dropdowns = document.querySelectorAll(
+          '[id^="variation_"] select, #native_dropdown_selected_size_name, ' +
+          'select[name*="variation"], select[id*="variation"]'
+        );
+
+        for (const dropdown of dropdowns) {
+          for (const opt of dropdown.querySelectorAll('option')) {
+            if (fuzzyMatch(opt.textContent?.trim() || '', option)) {
+              dropdown.value = opt.value;
+              dropdown.dispatchEvent(new Event('change', { bubbles: true }));
+              selected.push(`${option} (dropdown)`);
+              matched = true;
+              await sleep(500);
+              break;
+            }
+          }
+          if (matched) break;
+        }
+      }
+
+      if (!matched) {
+        warnings.push(`No match found for variant option "${option}"`);
+      }
+    }
+
+    if (warnings.length && !selected.length) {
+      return { success: false, selected, warnings };
+    }
+    return { success: true, selected, warnings };
   }
 
   function sleep(ms) {
