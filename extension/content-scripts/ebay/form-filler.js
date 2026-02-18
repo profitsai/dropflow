@@ -6753,86 +6753,9 @@
     });
 
     // The picupload iframe is same-origin (ebay.com.au/lstng/picupload) but we need
-    // to inject into its document, not the parent. Use the parent's script to postMessage
-    // into the iframe, or inject directly if accessible.
-    const script = document.createElement('script');
-    script.textContent = `
-    (async function() {
-      var CALLBACK = ${JSON.stringify(callbackId)};
-      var FILE_DATA = ${JSON.stringify(fileDataArr)};
-      
-      try {
-        // Find the picupload iframe
-        var iframe = document.querySelector('iframe[src*="picupload"], iframe[name*="photo"]');
-        if (!iframe || !iframe.contentWindow) {
-          window.postMessage({ type: CALLBACK, success: false, error: 'no picupload iframe' }, '*');
-          return;
-        }
-        
-        var iframeWin = iframe.contentWindow;
-        var u = iframeWin.sellingUIUploader;
-        if (!u) {
-          window.postMessage({ type: CALLBACK, success: false, error: 'no uploader in picupload' }, '*');
-          return;
-        }
-        var key = Object.keys(u)[0];
-        var inst = u[key];
-        if (!inst || typeof inst.uploadFiles !== 'function') {
-          window.postMessage({ type: CALLBACK, success: false, error: 'no uploadFiles in picupload' }, '*');
-          return;
-        }
-        
-        function dataUrlToFile(dataUrl, name, mimeType) {
-          var arr = dataUrl.split(',');
-          var mime = mimeType || (arr[0].match(/:(.*?);/) || [])[1] || 'image/jpeg';
-          var bstr = atob(arr[1]);
-          var n = bstr.length;
-          var u8 = new Uint8Array(n);
-          while(n--) u8[n] = bstr.charCodeAt(n);
-          return new File([u8], name, { type: mime });
-        }
-        
-        var config = Object.assign({}, inst.config);
-        config.acceptImage = true;
-        config.maxImages = 24;
-        inst.acceptImage = true;
-        
-        var uploaded = 0;
-        for (var i = 0; i < FILE_DATA.length; i++) {
-          var file = dataUrlToFile(FILE_DATA[i].dataUrl, FILE_DATA[i].name, FILE_DATA[i].type);
-          var done = false;
-          var ok = false;
-          var onOk = function() { done = true; ok = true; };
-          var onFail = function() { done = true; };
-          if (inst.emitter) {
-            inst.emitter.on('upload-success', onOk);
-            inst.emitter.on('upload-fail', onFail);
-          }
-          
-          inst.uploadFiles([file], 'select', config, { numImage: uploaded, numVideo: 0 });
-          
-          var start = Date.now();
-          while (!done && Date.now() - start < 20000) {
-            await new Promise(function(r) { setTimeout(r, 500); });
-          }
-          
-          if (inst.emitter) {
-            inst.emitter.removeListener('upload-success', onOk);
-            inst.emitter.removeListener('upload-fail', onFail);
-          }
-          
-          if (ok || !done) uploaded++;
-          await new Promise(function(r) { setTimeout(r, 500); });
-        }
-        
-        window.postMessage({ type: CALLBACK, success: uploaded > 0, uploaded: uploaded }, '*');
-      } catch(e) {
-        window.postMessage({ type: CALLBACK, success: false, error: e.message }, '*');
-      }
-    })();
-    `;
-    (document.head || document.documentElement).appendChild(script);
-    script.remove();
+    // to inject into its document, not the parent. Use the service worker to inject
+    // into the MAIN world via chrome.scripting.executeScript (CSP-safe, no inline script).
+    await chrome.runtime.sendMessage({ type: 'EXECUTE_MAIN_WORLD_PICUPLOAD', callbackId, fileDataArr });
 
     const result = await resultPromise;
     if (result.success) {
@@ -8561,89 +8484,10 @@
       }, 60000);
     });
 
-    // Inject the upload script into the MAIN world via <script> tag
-    const script = document.createElement('script');
-    script.textContent = `
-    (async function() {
-      const CALLBACK_ID = ${JSON.stringify(callbackId)};
-      const FILE_DATA = ${JSON.stringify(fileDataArr)};
-      
-      try {
-        const uploaders = window.sellingUIUploader;
-        if (!uploaders) {
-          window.postMessage({ type: CALLBACK_ID, success: false, error: 'no sellingUIUploader' }, '*');
-          return;
-        }
-        const uploaderKey = Object.keys(uploaders)[0];
-        if (!uploaderKey) {
-          window.postMessage({ type: CALLBACK_ID, success: false, error: 'no uploader instance' }, '*');
-          return;
-        }
-        const uploader = uploaders[uploaderKey];
-        if (!uploader || typeof uploader.uploadFiles !== 'function') {
-          window.postMessage({ type: CALLBACK_ID, success: false, error: 'no uploadFiles method' }, '*');
-          return;
-        }
+    // Inject the upload function into the MAIN world via chrome.scripting (CSP-safe, no inline script).
+    await chrome.runtime.sendMessage({ type: 'EXECUTE_MAIN_WORLD_HELIX', callbackId, fileDataArr });
 
-        // Convert data URLs back to File objects
-        function dataUrlToFile(dataUrl, name, mimeType) {
-          const arr = dataUrl.split(',');
-          const mime = mimeType || (arr[0].match(/:(.*?);/) || [])[1] || 'image/jpeg';
-          const bstr = atob(arr[1]);
-          let n = bstr.length;
-          const u8arr = new Uint8Array(n);
-          while(n--) u8arr[n] = bstr.charCodeAt(n);
-          return new File([u8arr], name, { type: mime });
-        }
-
-        const config = Object.assign({}, uploader.config);
-        config.acceptImage = true;
-        config.accept = 'image/*,image/heic,image/heif,image/jpeg,image/png,image/webp,video/mp4,video/quicktime';
-        config.maxImages = config.maxPhotos || 24;
-        config.maxPhotos = config.maxPhotos || 24;
-        uploader.acceptImage = true;
-
-        let uploadedCount = 0;
-        for (let i = 0; i < FILE_DATA.length; i++) {
-          const file = dataUrlToFile(FILE_DATA[i].dataUrl, FILE_DATA[i].name, FILE_DATA[i].type);
-          
-          let succeeded = false, failed = false;
-          const onSuccess = () => { succeeded = true; };
-          const onFail = () => { failed = true; };
-          if (uploader.emitter && uploader.emitter.on) {
-            uploader.emitter.on('upload-success', onSuccess);
-            uploader.emitter.on('upload-fail', onFail);
-          }
-
-          uploader.uploadFiles(
-            [file], 'select', config,
-            { numImage: (uploader.totalImagesCount || uploadedCount), numVideo: (uploader.totalVideosCount || 0) }
-          );
-
-          // Poll for completion (max 20s per image)
-          const start = Date.now();
-          while (Date.now() - start < 20000) {
-            if (succeeded || failed) break;
-            await new Promise(r => setTimeout(r, 500));
-          }
-          if (uploader.emitter && uploader.emitter.removeListener) {
-            uploader.emitter.removeListener('upload-success', onSuccess);
-            uploader.emitter.removeListener('upload-fail', onFail);
-          }
-          if (succeeded) uploadedCount++;
-          await new Promise(r => setTimeout(r, 500));
-        }
-
-        window.postMessage({ type: CALLBACK_ID, success: uploadedCount > 0, uploadedCount }, '*');
-      } catch (e) {
-        window.postMessage({ type: CALLBACK_ID, success: false, error: e.message }, '*');
-      }
-    })();
-    `;
-    (document.head || document.documentElement).appendChild(script);
-    script.remove(); // Clean up DOM
-
-    console.log(`[DropFlow] Helix: injected main-world upload script for ${files.length} images...`);
+    console.log(`[DropFlow] Helix: dispatched main-world upload for ${files.length} images...`);
 
     const result = await resultPromise;
     if (result.success) {
@@ -8796,31 +8640,8 @@
       setTimeout(() => { window.removeEventListener('message', handler); resolve({ success: false }); }, 15000);
     });
 
-    const epsScript = document.createElement('script');
-    epsScript.textContent = `
-    (function() {
-      var CALLBACK_ID = ${JSON.stringify(epsCallbackId)};
-      var urls = ${JSON.stringify(uploadedUrls)};
-      try {
-        var uploaders = window.sellingUIUploader;
-        if (!uploaders) { window.postMessage({ type: CALLBACK_ID, success: false }, '*'); return; }
-        var key = Object.keys(uploaders)[0];
-        var uploader = key ? uploaders[key] : null;
-        if (!uploader || typeof uploader.uploadFiles !== 'function') { window.postMessage({ type: CALLBACK_ID, success: false }, '*'); return; }
-        var config = Object.assign({}, uploader.config);
-        config.acceptImage = true;
-        config.accept = 'image/*';
-        config.maxImages = 24;
-        uploader.acceptImage = true;
-        uploader.uploadFiles(urls, 'web', config, { numImage: uploader.totalImagesCount || 0, numVideo: uploader.totalVideosCount || 0 });
-        window.postMessage({ type: CALLBACK_ID, success: true }, '*');
-      } catch (e) {
-        window.postMessage({ type: CALLBACK_ID, success: false, error: e.message }, '*');
-      }
-    })();
-    `;
-    (document.head || document.documentElement).appendChild(epsScript);
-    epsScript.remove();
+    // Inject the EPS URL association via chrome.scripting MAIN world (CSP-safe, no inline script).
+    await chrome.runtime.sendMessage({ type: 'EXECUTE_MAIN_WORLD_EPS', callbackId: epsCallbackId, uploadedUrls });
 
     const epsResult = await epsResultPromise;
     if (epsResult.success) {
