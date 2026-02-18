@@ -8145,6 +8145,21 @@
       console.log('[DropFlow] Brand fallback to "Unbranded"');
     }
 
+    // Country of Origin: default to "China" for AliExpress-sourced listings.
+    // eBay AU often requires this field. Set it if present in required fields,
+    // or add it proactively â€" the API PUT will apply it regardless.
+    const countryKey = Object.keys(allAttributes).find(k => /country.*origin/i.test(k));
+    if (countryKey) {
+      if (/^(details in description|n\/a|none|not specified|does not apply)$/i.test(allAttributes[countryKey])) {
+        allAttributes[countryKey] = 'China';
+        console.log(`[DropFlow] Country of Origin defaulted to "China" (field: "${countryKey}")`);
+      }
+    } else {
+      // Field wasn't in required list â€" add it so the API PUT sets it anyway
+      allAttributes['Country/Region of Manufacture'] = 'China';
+      console.log('[DropFlow] Country/Region of Manufacture added as "China" (AliExpress source)');
+    }
+
     console.log('[DropFlow] All required item specifics to fill:', allAttributes);
 
     // Step 6: API PUT first (most reliable â€" bypasses eBay's React DOM entirely)
