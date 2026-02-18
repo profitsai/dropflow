@@ -3210,13 +3210,23 @@ async function handleScheduleBoost(payload) {
   // Save schedule settings (including the action settings for when the alarm fires)
   await chrome.storage.local.set({ [BOOST_SCHEDULE]: schedule });
 
-  // Create chrome.alarm
-  await chrome.alarms.create('boost-schedule', {
-    periodInMinutes: schedule.intervalHours * 60
-  });
+  // Calculate `when` for the first alarm fire at the scheduled time
+  const alarmOptions = { periodInMinutes: schedule.intervalHours * 60 };
+  if (schedule.scheduledTime) {
+    const [hours, minutes] = schedule.scheduledTime.split(':').map(Number);
+    const now = new Date();
+    const nextRun = new Date();
+    nextRun.setHours(hours, minutes, 0, 0);
+    if (nextRun <= now) {
+      nextRun.setDate(nextRun.getDate() + 1);
+    }
+    alarmOptions.when = nextRun.getTime();
+  }
 
-  console.log(`[DropFlow Boost] Schedule set: ${schedule.action} every ${schedule.intervalHours}h`);
-  return { success: true, message: `Scheduled: ${schedule.action} every ${schedule.intervalHours}h` };
+  await chrome.alarms.create('boost-schedule', alarmOptions);
+
+  console.log(`[DropFlow Boost] Schedule set: every ${schedule.intervalHours}h, sellSimilar=${schedule.sellSimilarEnabled}, revise=${schedule.reviseEnabled}`);
+  return { success: true, message: `Scheduled every ${schedule.intervalHours}h` };
 }
 
 async function handleCancelSchedule() {
@@ -3929,18 +3939,15 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     const schedule = result[BOOST_SCHEDULE];
     if (!schedule) return;
 
-    console.log(`[DropFlow Boost] Scheduled alarm fired: ${schedule.action}`);
+    console.log(`[DropFlow Boost] Scheduled alarm fired. sellSimilar=${schedule.sellSimilarEnabled}, revise=${schedule.reviseEnabled}`);
     try {
-      switch (schedule.action) {
-        case 'end-sell':
-          await handleEndLowPerformers(schedule.settings || { minSold: 0, minViews: 0, hoursRemaining: 24, autoRelist: true });
-          break;
-        case 'bulk-revise':
-          await handleBulkRevise(schedule.settings || { toggleOffers: false });
-          break;
-        case 'send-offers':
-          await handleSendOffers(schedule.settings || { discountPct: 10 });
-          break;
+      if (schedule.sellSimilarEnabled) {
+        console.log('[DropFlow Boost] Running scheduled End & Sell Similar');
+        await handleEndLowPerformers(schedule.settings || { minSold: 0, minViews: 0, hoursRemaining: 24, autoRelist: true });
+      }
+      if (schedule.reviseEnabled) {
+        console.log('[DropFlow Boost] Running scheduled Bulk Revise');
+        await handleBulkRevise(schedule.settings || { toggleOffers: false });
       }
     } catch (e) {
       console.error('[DropFlow Boost] Scheduled action failed:', e);

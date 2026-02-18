@@ -47,7 +47,6 @@ if (window.__dropflow_boost_listings_loaded) {
   function safeClick(el) {
     if (!el) return false;
     el.scrollIntoView({ block: 'center', behavior: 'instant' });
-    el.click();
     el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     return true;
   }
