@@ -6048,11 +6048,16 @@ async function applyPruningRules(item, settings) {
     return true;
   }
 
-  // No sales pruning
+  // No sales pruning (date-based filtering not possible — Seller Hub table doesn't expose listing creation date)
   if (settings.pruneNoSales && item.sold !== undefined) {
-    if (item.sold <= settings.pruneNoSalesCount) {
-      // TODO: Check date-based sales filtering (requires additional data)
-      // For now, just check sold count
+    if (item.sold <= (settings.pruneNoSalesCount || 0)) {
+      trackerLog(`  #${item.position} ${item.itemId}: PRUNED — only ${item.sold} sales (threshold: ${settings.pruneNoSalesCount})`);
+      if (settings.pruneNoSalesAction === 'delete') {
+        await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: settings.ebayDomain || 'com.au' }, { action: 'end_listing' });
+      } else {
+        await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: settings.ebayDomain || 'com.au' }, { action: 'set_quantity', quantity: 0 });
+      }
+      return true;
     }
   }
 
@@ -6090,9 +6095,14 @@ async function applyStockRules(item, amazonResult, settings) {
   }
 
   if (!amazonResult.inStock) {
-    // Out of stock on Amazon → set eBay qty to 0
-    trackerLog(`  #${item.position} ${item.itemId}: OOS on Amazon → setting eBay qty to 0`);
-    await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: domain }, { action: 'set_quantity', quantity: 0 });
+    // Out of stock on Amazon → apply OOS action
+    if (settings.oosAction === 'delete') {
+      trackerLog(`  #${item.position} ${item.itemId}: OOS on Amazon → ending listing`);
+      await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: domain }, { action: 'end_listing' });
+    } else {
+      trackerLog(`  #${item.position} ${item.itemId}: OOS on Amazon → setting eBay qty to 0`);
+      await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: domain }, { action: 'set_quantity', quantity: 0 });
+    }
   } else if (item.quantity === 0 || settings.forceRestock) {
     // In stock + currently OOS on eBay (or force restock) → restock
     const qty = settings.forceRestock ? (settings.forceRestockQty || 1) : (settings.restockQuantity || 1);
@@ -6119,15 +6129,25 @@ async function applyPriceRules(item, amazonResult, settings) {
 
   // Calculate new eBay price
   const amazonPrice = amazonResult.price;
-  const markupPct = settings.markupPercentage || 100;
-  const newEbayPrice = +(amazonPrice * (1 + markupPct / 100)).toFixed(2);
+  let newEbayPrice;
+
+  if (settings.pricingOption === 'variable') {
+    // Variable pricing: find matching tier
+    const tiers = settings.priceVariableTiers || DEFAULTS[TRACKER_SETTINGS]?.priceVariableTiers || [];
+    const tier = tiers.find(t => amazonPrice >= t.min && amazonPrice < t.max);
+    const tierMarkup = tier ? tier.markup : (settings.markupPercentage || 100);
+    newEbayPrice = +(amazonPrice * (1 + tierMarkup / 100)).toFixed(2);
+  } else {
+    const markupPct = settings.markupPercentage || 100;
+    newEbayPrice = +(amazonPrice * (1 + markupPct / 100)).toFixed(2);
+  }
 
   // Check threshold
   const priceDiff = Math.abs(newEbayPrice - item.price);
   const threshold = settings.priceTriggerThreshold || 2;
 
   if (priceDiff >= threshold) {
-    trackerLog(`  #${item.position} ${item.itemId}: Price change: eBay $${item.price} → $${newEbayPrice} (Amazon $${amazonPrice}, markup ${markupPct}%)`);
+    trackerLog(`  #${item.position} ${item.itemId}: Price change: eBay $${item.price} → $${newEbayPrice} (Amazon $${amazonPrice}, ${settings.pricingOption || 'markup'})`);
     await reviseEbayListing({ ebayItemId: item.itemId, ebayDomain: domain }, { action: 'set_price', price: newEbayPrice });
   }
 }
