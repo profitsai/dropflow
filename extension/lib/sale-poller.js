@@ -13,12 +13,29 @@ export const SALE_POLL_LAST_RUN = 'salePollLastRun';
 export const SALE_POLL_STATS = 'salePollStats';
 export const SALE_POLL_ALARM = 'dropflow-sale-poll';
 
+// Mutex to prevent concurrent poll cycles
+let _pollRunning = false;
+
 /**
  * Run one poll cycle: open Seller Hub orders, scrape, detect new, create orders.
  * Called by the alarm handler in the service worker.
+ * Guarded by a mutex — concurrent calls return immediately.
  * @returns {{ newOrders: number, errors: string[] }}
  */
 export async function runSalePollCycle() {
+  if (_pollRunning) {
+    console.log('[DropFlow SalePoller] Poll already in progress, skipping.');
+    return { newOrders: 0, errors: ['Skipped: poll already running'] };
+  }
+  _pollRunning = true;
+  try {
+    return await _runSalePollCycleInner();
+  } finally {
+    _pollRunning = false;
+  }
+}
+
+async function _runSalePollCycleInner() {
   const errors = [];
   let newOrderCount = 0;
 

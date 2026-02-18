@@ -197,6 +197,14 @@ endAndSellBtn.addEventListener('click', async () => {
     const response = await chrome.runtime.sendMessage({ type: END_LOW_PERFORMERS, ...settings });
     setStatus(response?.message || response?.error || 'Complete');
     setProgress(100);
+
+    // Auto-close the boost tab when the setting is enabled and work was done
+    if (settings.autoClose && response?.success && response?.ended > 0) {
+      setStatus('Auto-closing tab in 3 seconds...');
+      await new Promise(r => setTimeout(r, 3000));
+      window.close();
+      return;
+    }
   } catch (e) {
     setStatus(`Error: ${e.message}`);
   }

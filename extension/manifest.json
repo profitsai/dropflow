@@ -253,32 +253,6 @@
         "content-scripts/ebay/seller-hub-tracker.js"
       ],
       "run_at": "document_idle"
-    },
-    {
-      "matches": [
-        "https://www.ebay.com/sh/lst/*",
-        "https://www.ebay.ca/sh/lst/*",
-        "https://www.ebay.co.uk/sh/lst/*",
-        "https://www.ebay.com.au/sh/lst/*",
-        "https://www.ebay.de/sh/lst/*",
-        "https://www.ebay.fr/sh/lst/*",
-        "https://www.ebay.it/sh/lst/*",
-        "https://www.ebay.es/sh/lst/*",
-        "https://www.ebay.nl/sh/lst/*",
-        "https://bulkedit.ebay.com/*",
-        "https://bulkedit.ebay.ca/*",
-        "https://bulkedit.ebay.co.uk/*",
-        "https://bulkedit.ebay.com.au/*",
-        "https://bulkedit.ebay.de/*",
-        "https://bulkedit.ebay.fr/*",
-        "https://bulkedit.ebay.it/*",
-        "https://bulkedit.ebay.es/*",
-        "https://bulkedit.ebay.nl/*"
-      ],
-      "js": [
-        "content-scripts/ebay/boost-listings.js"
-      ],
-      "run_at": "document_idle"
     }
   ],
   "action": {

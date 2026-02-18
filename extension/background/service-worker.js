@@ -2686,7 +2686,7 @@ async function scrapeAllActiveListings(domain, includePerformance = false, urlSu
  * End Low Performers: scrape active listings, filter by performance, end underperformers.
  */
 async function handleEndLowPerformers(payload) {
-  const { minSold = 0, minViews = 0, hoursRemaining = 24, autoRelist = false, autoRepeat = false } = payload;
+  const { minSold = 0, minViews = 0, hoursRemaining = 24, autoRelist = false, autoRepeat = false, autoClose = false } = payload;
   boostCancelled = false;
 
   const domain = await getEbayDomain();
