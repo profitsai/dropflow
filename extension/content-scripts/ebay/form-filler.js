@@ -3867,17 +3867,25 @@
 
     const removeChip = async (chip) => {
       if (!chip) return false;
-      const target = chip.removeTarget || null;
-      if (target) {
-        simulateClick(target);
-        await sleep(350);
-      } else if (chip.hasRemoveGlyph) {
-        const r = chip.el.getBoundingClientRect();
-        clickAtPoint(chip.el, Math.max(r.left + 4, r.right - 8), r.top + r.height / 2);
+      // PRIMARY: eBay MSKU chips use <button class="faux-link" aria-label="Remove X attribute">
+      const ariaRemoveBtn = chip.el.querySelector('button[aria-label^="Remove"]') ||
+                            queryAllWithShadow('button[aria-label^="Remove"]', chip.el)[0];
+      if (ariaRemoveBtn) {
+        simulateClick(ariaRemoveBtn);
         await sleep(350);
       } else {
-        simulateClick(asClickableTarget(chip.el));
-        await sleep(350);
+        const target = chip.removeTarget || null;
+        if (target) {
+          simulateClick(target);
+          await sleep(350);
+        } else if (chip.hasRemoveGlyph) {
+          const r = chip.el.getBoundingClientRect();
+          clickAtPoint(chip.el, Math.max(r.left + 4, r.right - 8), r.top + r.height / 2);
+          await sleep(350);
+        } else {
+          simulateClick(asClickableTarget(chip.el));
+          await sleep(350);
+        }
       }
       // Handle any confirmation dialogs (e.g., "Delete variations - Are you sure?")
       await dismissVariationDialogs();
@@ -4100,6 +4108,27 @@
           await sleep(120);
         }
         if (!dialog) {
+          // Fallback: eBay may show a plain text menu (not a dialog with checkboxes).
+          // Menu items are clickable elements with text matching attribute names.
+          const menuItems = queryAllWithShadow('li, [role="menuitem"], [role="option"], a, button, span', activeDoc)
+            .filter(el => isElementVisible(el) && (el.textContent || '').trim().length < 60);
+          const targetNorm = norm(axisLabel);
+          const menuMatch = menuItems.find(el => {
+            const elNorm = norm((el.textContent || '').trim());
+            return elNorm === targetNorm || (spec.strict && spec.strict.has(elNorm)) || (spec.soft && spec.soft.has(elNorm));
+          });
+          if (menuMatch) {
+            console.warn(`[DropFlow] Found plain text menu item for "${axisLabel}": "${(menuMatch.textContent || '').trim()}"`);
+            simulateClick(menuMatch);
+            await sleep(400);
+            // Look for Save button after selecting
+            const saveBtn = findButtonByText(activeDoc, /^\s*save\s*$/i);
+            if (saveBtn) { simulateClick(saveBtn); await sleep(500); }
+            if (didCreateAxisChip()) {
+              console.warn(`[DropFlow] Text menu selection succeeded for "${axisLabel}"`);
+              return true;
+            }
+          }
           await logVariationStep('variationBuilder:addOwnNoDialog', { axis: axisLabel, attempt });
           continue;
         }
@@ -4840,23 +4869,25 @@
     // When eBay reuses a draft, stale attributes like "Character" or "Character Family"
     // may already be selected. These must be removed first to avoid interfering with
     // axis matching and to prevent them surviving through accidental alias matches.
+    // Use aria-label remove buttons directly — eBay MSKU chips have
+    // <button class="faux-link" aria-label="Remove {Name} attribute">
     {
-      const blacklistedChips = chips.filter(c => BUILDER_AXIS_BLACKLIST.has(c.norm));
-      if (blacklistedChips.length > 0) {
-        console.warn(`[DropFlow] Removing ${blacklistedChips.length} blacklisted stale chip(s): [${blacklistedChips.map(c => c.text).join(', ')}]`);
-        for (const chip of blacklistedChips) {
-          const removed = await removeChip(chip);
-          if (!removed) {
-            // Retry with alternative close button selectors
-            const closeBtn = chip.el.querySelector('svg, [aria-label*="remove" i], [aria-label*="close" i], [aria-label*="delete" i], button:last-child');
-            if (closeBtn) {
-              simulateClick(closeBtn);
-              await sleep(500);
-              await dismissVariationDialogs();
-            }
-          }
+      const removeBtns = queryAllWithShadow('button[aria-label^="Remove"]', activeDoc)
+        .filter(btn => {
+          const label = btn.getAttribute('aria-label') || '';
+          const match = label.match(/^Remove\s+(.+?)\s+attribute$/i);
+          if (!match) return false;
+          const attrName = norm(match[1]);
+          return BUILDER_AXIS_BLACKLIST.has(attrName);
+        });
+      if (removeBtns.length > 0) {
+        console.warn(`[DropFlow] Removing ${removeBtns.length} blacklisted stale chip(s) via aria-label buttons`);
+        for (const btn of removeBtns) {
+          const label = btn.getAttribute('aria-label') || '';
+          simulateClick(btn);
           await sleep(500);
-          await logVariationStep('variationBuilder:blacklistChipRemoved', { chip: chip.text, removed });
+          await dismissVariationDialogs();
+          await logVariationStep('variationBuilder:blacklistChipRemoved', { chip: label, removed: true });
         }
         builderRoot = findBuilderRoot();
         chips = readAttributeChips();
