@@ -43,13 +43,18 @@
       return plTitle.textContent.trim();
     }
 
-    // 2. Known class names
+    // 2. Known class names (ordered from specific → broad)
     const classSelectors = [
       '.product-title-text',
       '[class*="ProductTitle"]',
       '[class*="product-title"]',
       '[class*="pdp-info"] h1',
-      '.pdp-body h1'
+      '.pdp-body h1',
+      // Newer AliExpress layout wrappers
+      '[class*="title--wrap"] h1',
+      '[class*="titleWrap"] h1',
+      '[class*="title-wrap"] h1',
+      '[class*="title"] h1'
     ];
     for (const sel of classSelectors) {
       const el = document.querySelector(sel);
@@ -58,12 +63,44 @@
       }
     }
 
+    // 2b. Broad [class*="title"] — catch-all for any element whose class contains
+    //     "title" and whose text looks like a product name (> 15 chars, not branding)
+    const titleEls = document.querySelectorAll('[class*="title"]');
+    for (const el of titleEls) {
+      if (el.children.length > 3) continue; // skip containers with many children
+      const text = el.textContent.trim();
+      if (text.length > 15 && !text.toLowerCase().startsWith('aliexpress') &&
+          !text.toLowerCase().startsWith('welcome') && !/\n/.test(text.substring(0, 60))) {
+        return text;
+      }
+    }
+
+    // 2c. og:title / meta title — very reliable on new AliExpress page layouts
+    const ogTitle = document.querySelector('meta[property="og:title"]');
+    if (ogTitle) {
+      const content = (ogTitle.getAttribute('content') || '').trim();
+      const stripped = content
+        .replace(/\s*[\|–—-]\s*ali\s*express.*$/i, '')
+        .replace(/\s*[\|–—-]\s*www\.aliexpress\.\w+.*$/i, '')
+        .trim();
+      if (stripped.length > 15) return stripped;
+    }
+    const metaTitle = document.querySelector('meta[name="title"]');
+    if (metaTitle) {
+      const content = (metaTitle.getAttribute('content') || '').trim();
+      const stripped = content
+        .replace(/\s*[\|–—-]\s*ali\s*express.*$/i, '')
+        .replace(/\s*[\|–—-]\s*www\.aliexpress\.\w+.*$/i, '')
+        .trim();
+      if (stripped.length > 15) return stripped;
+    }
+
     // 3. Find an h1 that actually contains a product name (skip short/branding h1s)
     const allH1 = document.querySelectorAll('h1');
     for (const h1 of allH1) {
       const text = h1.textContent.trim();
       // Skip if it looks like branding ("AliExpress", "Welcome", etc.)
-      if (text.length > 10 && !text.toLowerCase().startsWith('aliexpress') &&
+      if (text.length > 15 && !text.toLowerCase().startsWith('aliexpress') &&
           !text.toLowerCase().startsWith('welcome')) {
         return text;
       }
@@ -294,14 +331,47 @@
       baseInfo.subject ||
       baseInfo.title ||
       baseInfo.product_title ||
+      baseInfo.productTitle ||
+      baseInfo.name ||
       root.title ||
       root.subject ||
       root.product_title ||
+      root.productTitle ||
+      root.name ||
       data?.title ||
+      data?.subject ||
+      data?.productTitle ||
+      data?.name ||
       ''
     ).trim();
 
-    // If API didn't give us a title, get it from the DOM
+    // Deep-scan fallback: walk the API response looking for any key whose name
+    // contains "title", "subject", or "name" and whose value is a plausible
+    // product title string (> 10 chars, not a URL/path).
+    if (!title) {
+      const deepFindTitle = (obj, depth = 0) => {
+        if (!obj || depth > 8 || typeof obj !== 'object') return '';
+        for (const [key, val] of Object.entries(obj)) {
+          if (typeof val === 'string' && val.length > 10 && val.length < 500 &&
+              !val.startsWith('http') && !val.startsWith('/') &&
+              /title|subject|product_name|productname/i.test(key)) {
+            return val;
+          }
+        }
+        // Second pass: descend into objects
+        for (const val of Object.values(obj)) {
+          if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+            const found = deepFindTitle(val, depth + 1);
+            if (found) return found;
+          }
+        }
+        return '';
+      };
+      title = deepFindTitle(root) || deepFindTitle(data) || '';
+      if (title) console.log(`[DropFlow Ali] Title found via deep-scan: "${title.substring(0, 60)}"`);
+    }
+
+    // If API still didn't give us a title, get it from the DOM
     if (!title) {
       console.warn('[DropFlow Ali] No title in API response, using DOM');
       title = getTitleFromDom();
@@ -1117,13 +1187,19 @@
       '[class*="price-current"]',
       '.uniform-banner-box-price',
       '[data-pl="product-price"] span',
+      '[data-pl*="price"] span',
       '[class*="ProductPrice"] span',
       '[class*="product-price"] span',
       '.es--wrap--erdmPRe .es--char--ygDsRFW',
       '[class*="snow-price"]',
       '[class*="Price-module"]',
       '.pdp-price',
-      '.pdp-comp-price-current'
+      '.pdp-comp-price-current',
+      // Broader catch-all for newer AliExpress layouts — must come after specific ones
+      '[class*="price--current"]',
+      '[class*="currentPrice"]',
+      '[class*="salePrice"]',
+      '[class*="sale-price"]'
     ];
     for (const sel of selectors) {
       const el = document.querySelector(sel);
@@ -1146,6 +1222,28 @@
           const price = parseFloat(raw);
           if (price > 0) return price;
         }
+      }
+    }
+
+    // Try og:price:amount meta tag (set on product pages by AliExpress)
+    const ogPrice = document.querySelector('meta[property="og:price:amount"]');
+    if (ogPrice) {
+      const price = parseFloat(ogPrice.getAttribute('content') || '0');
+      if (price > 0) return price;
+    }
+
+    // Broad [class*="price"] scan — find smallest leaf element containing a price
+    const priceEls = document.querySelectorAll('[class*="price"]');
+    for (const el of priceEls) {
+      if (el.children.length > 5) continue; // skip containers
+      if (el.offsetTop > 1500) continue;
+      const text = el.textContent.trim();
+      if (text.length > 30) continue;
+      const match = text.match(/(?:US\s*)?[$€£¥]?\s*([\d]+[.,]\d{2})\b/);
+      if (match) {
+        const raw = match[1].replace(/,(?=\d{3})/g, '').replace(',', '.');
+        const price = parseFloat(raw);
+        if (price > 0.01 && price < 100000) return price;
       }
     }
 
@@ -1428,6 +1526,44 @@
     if (!data.title && scriptData.title) {
       data.title = scriptData.title;
     }
+
+    // og:title / og:description meta tag fallbacks — last resort before giving up
+    // These are always present on AliExpress product pages regardless of layout variant
+    if (!data.title) {
+      const ogTitle = document.querySelector('meta[property="og:title"]');
+      if (ogTitle) {
+        const content = (ogTitle.getAttribute('content') || '').trim();
+        const stripped = content
+          .replace(/\s*[\|–—-]\s*ali\s*express.*$/i, '')
+          .replace(/\s*[\|–—-]\s*www\.aliexpress\.\w+.*$/i, '')
+          .trim();
+        if (stripped.length > 5) {
+          data.title = stripped;
+          console.log(`[DropFlow Ali] Title from og:title meta: "${stripped.substring(0, 60)}"`);
+        }
+      }
+    }
+    if (!data.description) {
+      const ogDesc = document.querySelector('meta[property="og:description"]');
+      if (ogDesc) {
+        const content = (ogDesc.getAttribute('content') || '').trim();
+        if (content.length > 10) {
+          data.description = content.substring(0, 2000);
+          console.log('[DropFlow Ali] Description from og:description meta');
+        }
+      }
+    }
+    if (!data.price) {
+      const ogPrice = document.querySelector('meta[property="og:price:amount"]');
+      if (ogPrice) {
+        const price = parseFloat(ogPrice.getAttribute('content') || '0');
+        if (price > 0) {
+          data.price = price;
+          console.log(`[DropFlow Ali] Price from og:price:amount meta: $${price}`);
+        }
+      }
+    }
+
     // Supplement variation data from script tags if API didn't provide it
     if (!data.variations?.hasVariations && scriptData.variations?.hasVariations) {
       data.variations = scriptData.variations;
