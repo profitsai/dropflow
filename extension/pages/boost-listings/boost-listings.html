@@ -3,157 +3,248 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>DropFlow - Boost My Listings</title>
+  <title>Boost My Listings</title>
   <link rel="stylesheet" href="boost-listings.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>Boost My Listings</h1>
-      <p class="subtitle">End low performers, relist, and manage offers</p>
-    </header>
 
-    <!-- Tab Navigation -->
-    <div class="tabs">
-      <button class="tab active" data-tab="end-sell">End & Sell Similar</button>
-      <button class="tab" data-tab="bulk-revise">Bulk Revise</button>
-      <button class="tab" data-tab="offers">Offers</button>
-      <button class="tab" data-tab="schedule">Schedule</button>
+<h1>Boost My Listings</h1>
+
+<!-- Schedule Bar -->
+<div id="schedule_container">
+  <button id="toggle_schedule_options_button" class="toggle_options_button" data-modal-target="#schedule_settings_modal">
+    <i class="fas fa-cog" style="font-size: small;"> Schedule Automation</i>
+  </button>
+  <p>Current Time: <span id="current_time"></span></p>
+  <p id="time_until_schedule" style="display: none;">Time until next schedule: <span id="countdown"></span></p>
+</div>
+
+<!-- Schedule Settings Modal -->
+<div id="schedule_settings_modal" class="modal">
+  <div class="modal-content">
+    <span class="close">&times;</span>
+    <h2>Schedule Automation</h2>
+    <p>Set a time to automatically end and relist low-performing listings. Enable the option below and choose a time to start the process.</p>
+    <div class="checkbox-filter">
+      <div class="filter">
+        <label for="sell_similar_toggle_schedule_automation">Enable Sell Similar Automation
+          <i class="fas fa-info-circle tooltip-icon"></i>
+          <span class="tooltip">Enable this option to automatically end and relist low-performing listings.</span>
+        </label>
+        <input type="checkbox" id="sell_similar_toggle_schedule_automation" checked>
+      </div>
+      <div class="filter">
+        <label for="revise_listing_toggle_schedule_automation">Enable Bulk Revise Listing Automation
+          <i class="fas fa-info-circle tooltip-icon"></i>
+          <span class="tooltip">Enable this option to automatically revise listings in bulk.</span>
+        </label>
+        <input type="checkbox" id="revise_listing_toggle_schedule_automation">
+      </div>
+      <div id="divider"></div>
+      <div class="filter">
+        <label for="schedule_toggle" style="color: red;">Enable Scheduled Relisting
+          <i class="fas fa-info-circle tooltip-icon"></i>
+          <span class="tooltip">Enable this option to automatically start the process at a specific time.</span>
+        </label>
+        <input type="checkbox" id="schedule_toggle">
+      </div>
+      <div class="filter">
+        <label for="scheduled_time">Scheduled Start Time:
+          <i class="fas fa-info-circle tooltip-icon"></i>
+          <span class="tooltip">Set the time in 24-hour format. E.g. '14:30' = 2:30 PM.</span>
+        </label>
+        <input type="time" id="scheduled_time">
+      </div>
+      <div class="filter">
+        <label for="scheduled_interval">Scheduled Interval:
+          <i class="fas fa-info-circle tooltip-icon"></i>
+          <span class="tooltip">Set the interval to repeat the automation process.</span>
+        </label>
+        <select id="scheduled_interval">
+          <option value="1">1 hour</option>
+          <option value="2">2 hours</option>
+          <option value="3">3 hours</option>
+          <option value="4">4 hours</option>
+          <option value="5">5 hours</option>
+          <option value="6">6 hours</option>
+          <option value="7">7 hours</option>
+          <option value="8">8 hours</option>
+          <option value="9">9 hours</option>
+          <option value="10">10 hours</option>
+          <option value="11">11 hours</option>
+          <option value="12">12 hours</option>
+          <option value="13">13 hours</option>
+          <option value="14">14 hours</option>
+          <option value="15">15 hours</option>
+          <option value="16">16 hours</option>
+          <option value="17">17 hours</option>
+          <option value="18">18 hours</option>
+          <option value="19">19 hours</option>
+          <option value="20">20 hours</option>
+          <option value="21">21 hours</option>
+          <option value="22">22 hours</option>
+          <option value="23">23 hours</option>
+          <option value="24" selected>24 hours</option>
+        </select>
+      </div>
     </div>
+  </div>
+</div>
 
-    <!-- End & Sell Similar -->
-    <section class="tab-content active" id="tab-end-sell">
-      <div class="card">
-        <h2>End Low Performers & Relist</h2>
-        <div class="settings-grid">
-          <div class="form-group">
-            <label for="min-sold">Minimum Sold Count</label>
-            <input type="number" id="min-sold" min="0" value="0" placeholder="0">
-            <span class="hint">Items with fewer sales than this will be ended</span>
-          </div>
-          <div class="form-group">
-            <label for="min-views">Minimum Views</label>
-            <input type="number" id="min-views" min="0" value="0" placeholder="0">
-          </div>
-          <div class="form-group">
-            <label for="hours-remaining">Hours Remaining (max)</label>
-            <input type="number" id="hours-remaining" min="0" value="24" placeholder="24">
-            <span class="hint">Only end items with less than this many hours left</span>
-          </div>
-        </div>
-        <div class="checkbox-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="auto-relist" checked>
-            <span>Auto Sell Similar after ending</span>
-          </label>
-          <label class="checkbox-label">
-            <input type="checkbox" id="auto-repeat">
-            <span>Repeat until no more low performers found</span>
-          </label>
-        </div>
-        <div class="controls">
-          <button id="btn-end-sell" class="btn btn-primary">Start End & Sell Similar</button>
-          <button id="btn-stop-end" class="btn btn-danger" disabled>Stop</button>
-        </div>
-        <div class="progress-section" id="progress-end-sell" style="display: none;">
-          <div class="progress-bar"><div class="progress-fill" id="progress-fill-end-sell"></div></div>
-          <div class="progress-text" id="progress-text-end-sell"></div>
-        </div>
-      </div>
-    </section>
+<!-- End & Sell Similar Section -->
+<div id="end_and_sell_similar_container" class="main_container">
+  <h3>End &amp; Sell Similar</h3>
 
-    <!-- Bulk Revise -->
-    <section class="tab-content" id="tab-bulk-revise">
-      <div class="card">
-        <h2>Bulk Revise Listings</h2>
-        <div class="form-group">
-          <label>Options</label>
-          <label class="checkbox-label">
-            <input type="checkbox" id="toggle-offers-after">
-            <span>Toggle offers on/off after revision</span>
-          </label>
-        </div>
-        <div class="controls">
-          <button id="btn-bulk-revise" class="btn btn-primary">Start Bulk Revise</button>
-          <button id="btn-stop-revise" class="btn btn-danger" disabled>Stop</button>
-        </div>
-        <div class="progress-section" id="progress-bulk-revise" style="display: none;">
-          <div class="progress-bar"><div class="progress-fill" id="progress-fill-bulk-revise"></div></div>
-          <div class="progress-text" id="progress-text-bulk-revise"></div>
-        </div>
-      </div>
-    </section>
+  <button id="toggle_similar_options_button" class="toggle_options_button" data-modal-target="#sell_similar_settings_modal">
+    <i class="fas fa-cog"></i>
+  </button>
+  <button id="end_and_sell_similar_button">End &amp; Sell Similar</button>
+  <button id="cancel_boost_button" class="cancel-button" style="display:none;">Cancel</button>
+  <button id="info_button" class="info-button" data-modal-target="#info_modal">
+    <i class="fas fa-info-circle"></i>
+  </button>
 
-    <!-- Offers -->
-    <section class="tab-content" id="tab-offers">
-      <div class="card">
-        <h2>Send Offers</h2>
-        <div class="form-group">
-          <label for="discount-pct">Discount Percentage</label>
-          <input type="number" id="discount-pct" min="1" max="50" value="10">
-          <span class="hint">Percentage off the listing price to offer buyers</span>
-        </div>
-        <button id="btn-send-offers" class="btn btn-primary">Send Offers</button>
-        <div class="progress-section" id="progress-send-offers" style="display: none;">
-          <div class="progress-bar"><div class="progress-fill" id="progress-fill-send-offers"></div></div>
-          <div class="progress-text" id="progress-text-send-offers"></div>
-        </div>
-      </div>
-      <div class="card">
-        <h2>Review Pending Offers</h2>
-        <div class="form-group">
-          <label for="min-markup">Minimum Markup (%)</label>
-          <input type="number" id="min-markup" min="0" value="15">
-          <span class="hint">Accept offers only if they meet this minimum markup</span>
-        </div>
-        <button id="btn-review-offers" class="btn btn-secondary">Review Offers</button>
-        <div class="progress-section" id="progress-review-offers" style="display: none;">
-          <div class="progress-bar"><div class="progress-fill" id="progress-fill-review-offers"></div></div>
-          <div class="progress-text" id="progress-text-review-offers"></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Schedule -->
-    <section class="tab-content" id="tab-schedule">
-      <div class="card">
-        <h2>Schedule Automation</h2>
-        <div class="settings-grid">
-          <div class="form-group">
-            <label for="schedule-interval">Repeat Every</label>
-            <select id="schedule-interval">
-              <option value="1">1 hour</option>
-              <option value="2">2 hours</option>
-              <option value="4">4 hours</option>
-              <option value="6">6 hours</option>
-              <option value="12" selected>12 hours</option>
-              <option value="24">24 hours</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="schedule-action">Action</label>
-            <select id="schedule-action">
-              <option value="end-sell">End & Sell Similar</option>
-              <option value="bulk-revise">Bulk Revise</option>
-              <option value="send-offers">Send Offers</option>
-            </select>
-          </div>
-        </div>
-        <div class="controls">
-          <button id="btn-schedule" class="btn btn-primary">Set Schedule</button>
-          <button id="btn-cancel-schedule" class="btn btn-danger">Cancel Schedule</button>
-        </div>
-        <div id="schedule-status" class="status-message" style="display: none;"></div>
-      </div>
-    </section>
-
-    <!-- Progress / Logs -->
-    <section class="card" id="log-section">
-      <h2>Activity Log</h2>
-      <div id="log-output" class="log-container"></div>
-    </section>
+  <!-- Info Modal -->
+  <div id="info_modal" class="modal">
+    <div class="modal-content">
+      <span class="close">&times;</span>
+      <h2>Welcome to Boost My Listings!</h2>
+      <p>This tool helps you automatically end and relist low-performing listings to boost their visibility on eBay.</p>
+      <p>Please turn on <strong>Customize ended listings view</strong> with the following options:</p>
+      <ul>
+        <li>Views (30 days)</li>
+        <li>Item number</li>
+        <li>Sold quantity</li>
+        <li>Start date</li>
+        <li>Available quantity</li>
+      </ul>
+      <p>For detailed steps, visit your <a id="activeListingLink" href="https://www.ebay.com.au/sh/lst/active?action=pagination&sort=timeRemaining&limit=200" target="_blank">active listings</a> and click <strong>Customize</strong>.</p>
+      <p>Do the same for <a id="endedListingLink" href="https://www.ebay.com.au/sh/lst/ended?status=UNSOLD_NOT_RELISTED" target="_blank">ended listings</a> and enable <strong>Item number</strong>.</p>
+    </div>
   </div>
 
-  <script src="boost-listings.js" type="module"></script>
+  <!-- Sell Similar Settings Modal -->
+  <div id="sell_similar_settings_modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <span class="close">&times;</span>
+      <h3>Settings for Sell Similar Automation</h3>
+      <h4>Filters (Optional)</h4>
+      <div class="input-group">
+        <div class="filter">
+          <label for="minSold">Minimum Sold:
+            <i class="fas fa-info-circle tooltip-icon"></i>
+            <span class="tooltip">Items with sales ≤ this number will be targeted. E.g. '5' targets items sold 5 or fewer times.</span>
+          </label>
+          <input type="number" id="minSold" name="minSold" placeholder="0" value="0">
+        </div>
+        <div class="filter">
+          <label for="minViews">Minimum Views:
+            <i class="fas fa-info-circle tooltip-icon"></i>
+            <span class="tooltip">Items with views ≤ this number are considered underperforming. E.g. '100' targets items with fewer than 100 views.</span>
+          </label>
+          <input type="number" id="minViews" name="minViews" placeholder="0" value="1000">
+        </div>
+        <div class="filter">
+          <label for="timeLeft">Hours Left:
+            <i class="fas fa-info-circle tooltip-icon"></i>
+            <span class="tooltip">Items ending within this many hours will be flagged. '24' targets items ending within 24 hours.</span>
+          </label>
+          <input type="number" id="timeLeft" name="timeLeft" placeholder="72" value="24">
+        </div>
+      </div>
+      <h4>Options</h4>
+      <div class="checkbox-filter">
+        <div class="filter">
+          <label for="autoCloseToggle">Auto Close:
+            <i class="fas fa-info-circle tooltip-icon"></i>
+            <span class="tooltip">Automatically close the browser tab once the process is complete.</span>
+          </label>
+          <input type="checkbox" id="autoCloseToggle" checked>
+        </div>
+        <div class="filter">
+          <label for="autoRepeatToggle">Auto Repeat:
+            <i class="fas fa-info-circle tooltip-icon"></i>
+            <span class="tooltip">Automatically repeat until no more low-performing items are found.</span>
+          </label>
+          <input type="checkbox" id="autoRepeatToggle" checked>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div id="loading_bar" class="loading-bar">
+    <div id="loading_progress" class="loading-progress"></div>
+  </div>
+  <p id="status_message">Ready to start.</p>
+
+  <!-- Log Button & Modal -->
+  <button id="log_button" class="log-button" data-modal-target="#log_modal">
+    <i class="fas fa-list-alt"></i> View Logs
+  </button>
+  <div id="log_modal" class="modal">
+    <div class="modal-content">
+      <span class="close">&times;</span>
+      <h2>Progress Logs</h2>
+      <ul id="log_list"></ul>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk Revise Listing Section -->
+<div id="revise_listing_container" class="main_container">
+  <h3>Bulk Revise Listing</h3>
+  <button id="revise_options_button" class="toggle_options_button" data-modal-target="#revise_settings_modal">
+    <i class="fas fa-cog"></i>
+  </button>
+
+  <div id="revise_settings_modal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <span class="close">&times;</span>
+      <h3>Settings for Bulk Revise Listing</h3>
+      <div class="checkbox-filter">
+        <div class="filter">
+          <label for="switchOfferToggle">Switch Offer:
+            <i class="fas fa-info-circle tooltip-icon"></i>
+            <span class="tooltip">Automatically switch offer after revise. If offer is on, it turns off after revise and vice versa.</span>
+          </label>
+          <input type="checkbox" id="switchOfferToggle" checked>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <button id="bulk_revise_listing_button">Revise Listing</button>
+  <select id="offers_dropdown">
+    <option value="0">Turn On Offers</option>
+    <option value="1" selected>Turn Off Offers</option>
+  </select>
+</div>
+
+<!-- Optimization Section -->
+<div id="optimization_container" class="main_container">
+  <h3>Optimization</h3>
+  <div>
+    <label for="offer_percent_input" class="inline-input-label">Offer Percent (%)
+      <input type="number" id="offer_percent_input" min="0" max="100" step="0.1" value="5">
+    </label>
+    <button id="send_offers_button" class="optimized-buttons">
+      <span class="spinner" aria-hidden="true"></span>
+      <span class="label">Send Offers</span>
+    </button>
+  </div>
+  <div>
+    <label for="best_offer_markup_multiplier" class="inline-input-label">Best Offer Minimum Markup (%)
+      <input type="number" id="best_offer_markup_multiplier" min="0" step="0.1" value="50">
+    </label>
+    <button id="review_offers_button" class="optimized-buttons">
+      <span class="spinner" aria-hidden="true"></span>
+      <span class="label">Review Offers</span>
+    </button>
+  </div>
+</div>
+
+<script src="boost-listings.js" type="module"></script>
 </body>
 </html>
