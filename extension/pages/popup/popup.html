@@ -14,10 +14,20 @@
       <span class="version">v1.0.0</span>
     </header>
 
+    <!-- First-run welcome banner -->
+    <div id="welcome-banner" class="welcome-banner" style="display: none;">
+      <div class="welcome-icon">👋</div>
+      <div class="welcome-text">
+        <strong>Welcome to DropFlow!</strong>
+        <p>Sign in to start listing products from Amazon &amp; AliExpress to eBay automatically.</p>
+      </div>
+      <button id="dismiss-welcome" class="welcome-dismiss" title="Dismiss">&times;</button>
+    </div>
+
     <!-- Auth prompt (shown when not logged in) -->
     <div id="auth-prompt" class="auth-prompt" style="display: none;">
-      <p>Sign in to use DropFlow</p>
-      <button id="sign-in-btn" class="btn btn-primary">Sign In</button>
+      <p>Sign in to get started</p>
+      <button id="sign-in-btn" class="btn btn-primary btn-full">🔑 Sign In</button>
     </div>
 
     <!-- User info (shown when logged in) -->
@@ -26,59 +36,102 @@
       <button id="logout-btn" class="btn-logout">Logout</button>
     </div>
 
+    <!-- Status bar: tracker + monitor stats -->
+    <div id="status-bar" class="status-bar" style="display: none;">
+      <div class="status-item" id="tracker-status">
+        <span class="status-indicator status-inactive"></span>
+        <span class="status-label">Tracker</span>
+        <span class="status-value" id="tracker-status-text">Off</span>
+      </div>
+      <div class="status-divider"></div>
+      <div class="status-item" id="monitor-status">
+        <span class="status-label">Monitored</span>
+        <span class="status-value" id="monitor-count">—</span>
+      </div>
+      <div class="status-divider"></div>
+      <div class="status-item" id="sync-status">
+        <span class="status-label">Last sync</span>
+        <span class="status-value" id="last-sync-time">—</span>
+      </div>
+    </div>
+
     <nav id="nav-grid" class="nav-grid">
       <a href="#" class="nav-card" data-page="bulk-poster/bulk-poster.html">
-        <div class="nav-icon">📦</div>
-        <div class="nav-label">Bulk Poster</div>
+        <div class="nav-card-header">
+          <div class="nav-icon">📦</div>
+          <div class="nav-label">Bulk Poster</div>
+        </div>
         <div class="nav-desc">List Amazon products on eBay in bulk</div>
-      </a>
-
-      <a href="#" class="nav-card" data-page="title-builder/title-builder.html">
-        <div class="nav-icon">✏️</div>
-        <div class="nav-label">Title Builder</div>
-        <div class="nav-desc">AI-powered SEO title generation</div>
-      </a>
-
-      <a href="#" class="nav-card" data-page="boost-listings/boost-listings.html">
-        <div class="nav-icon">🚀</div>
-        <div class="nav-label">Boost Listings</div>
-        <div class="nav-desc">End & relist low performers</div>
-      </a>
-
-      <a href="#" class="nav-card" data-page="competitor-research/competitor.html">
-        <div class="nav-icon">🔍</div>
-        <div class="nav-label">Competitor Research</div>
-        <div class="nav-desc">Scan competitor sold items</div>
+        <div class="nav-action">Open →</div>
       </a>
 
       <a href="#" class="nav-card" data-page="ali-bulk-lister/ali-bulk-lister.html">
-        <div class="nav-icon">🛒</div>
-        <div class="nav-label">AliExpress Lister</div>
-        <div class="nav-desc">List AliExpress products on eBay in bulk</div>
+        <div class="nav-card-header">
+          <div class="nav-icon">🛒</div>
+          <div class="nav-label">AliExpress Lister</div>
+        </div>
+        <div class="nav-desc">List AliExpress products on eBay</div>
+        <div class="nav-action">Open →</div>
       </a>
 
       <a href="#" class="nav-card" data-page="monitor/monitor.html">
-        <div class="nav-icon">📊</div>
-        <div class="nav-label">Stock Monitor</div>
-        <div class="nav-desc">Track price & stock changes</div>
+        <div class="nav-card-header">
+          <div class="nav-icon">📊</div>
+          <div class="nav-label">Stock Monitor</div>
+        </div>
+        <div class="nav-desc">Track price &amp; stock changes</div>
+        <div class="nav-action">Open →</div>
+      </a>
+
+      <a href="#" class="nav-card" data-page="boost-listings/boost-listings.html">
+        <div class="nav-card-header">
+          <div class="nav-icon">🚀</div>
+          <div class="nav-label">Boost Listings</div>
+        </div>
+        <div class="nav-desc">End &amp; relist low performers</div>
+        <div class="nav-action">Open →</div>
       </a>
 
       <a href="#" class="nav-card" data-page="orders/orders.html">
-        <div class="nav-icon">🛍️</div>
-        <div class="nav-label">Orders</div>
-        <div class="nav-desc">Manage and track your orders</div>
+        <div class="nav-card-header">
+          <div class="nav-icon">🛍️</div>
+          <div class="nav-label">Orders</div>
+        </div>
+        <div class="nav-desc">Manage and auto-order from suppliers</div>
+        <div class="nav-action">Open →</div>
       </a>
 
-      <a href="#" class="nav-card" data-page="settings/settings.html">
-        <div class="nav-icon">⚙️</div>
-        <div class="nav-label">Settings</div>
-        <div class="nav-desc">Configure your DropFlow settings</div>
+      <a href="#" class="nav-card" data-page="title-builder/title-builder.html">
+        <div class="nav-card-header">
+          <div class="nav-icon">✏️</div>
+          <div class="nav-label">Title Builder</div>
+        </div>
+        <div class="nav-desc">AI-powered SEO title generation</div>
+        <div class="nav-action">Open →</div>
+      </a>
+
+      <a href="#" class="nav-card" data-page="competitor-research/competitor.html">
+        <div class="nav-card-header">
+          <div class="nav-icon">🔍</div>
+          <div class="nav-label">Competitor Research</div>
+        </div>
+        <div class="nav-desc">Scan competitor sold items</div>
+        <div class="nav-action">Open →</div>
+      </a>
+
+      <a href="#" class="nav-card nav-card-settings" data-page="settings/settings.html">
+        <div class="nav-card-header">
+          <div class="nav-icon">⚙️</div>
+          <div class="nav-label">Settings</div>
+        </div>
+        <div class="nav-desc">Markup, domains &amp; preferences</div>
+        <div class="nav-action">Open →</div>
       </a>
     </nav>
 
     <footer class="popup-footer">
       <span id="backend-status" class="status-dot status-unknown"></span>
-      <span id="backend-status-text">Checking backend...</span>
+      <span id="backend-status-text">Checking backend…</span>
     </footer>
   </div>
 

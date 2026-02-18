@@ -8,7 +8,7 @@ body {
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   background: #1a1a2e;
   color: #e0e0e0;
-  padding: 20px;
+  padding: 24px;
 }
 
 .container {
@@ -23,14 +23,21 @@ header {
 header h1 {
   font-size: 24px;
   color: #fff;
+  margin-bottom: 4px;
 }
 
+.header-desc {
+  font-size: 13px;
+  color: #777;
+}
+
+/* ── Sections ── */
 .settings-section {
   background: #16213e;
   border: 1px solid #2a2a4a;
   border-radius: 10px;
   padding: 20px;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .settings-section h2 {
@@ -41,8 +48,56 @@ header h1 {
   border-bottom: 1px solid #2a2a4a;
 }
 
+/* ── Advanced collapsible ── */
+.advanced-section {
+  padding: 0;
+}
+
+.advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.advanced-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-toggle::before {
+  content: '▸';
+  font-size: 14px;
+  color: #666;
+  transition: transform 0.2s;
+}
+
+.advanced-section[open] .advanced-toggle::before {
+  transform: rotate(90deg);
+}
+
+.advanced-toggle h2 {
+  margin: 0;
+  padding: 0;
+  border: none;
+  font-size: 16px;
+  color: #3a86ff;
+}
+
+.toggle-hint {
+  font-size: 11px;
+  color: #666;
+}
+
+.advanced-content {
+  padding: 0 20px 20px;
+}
+
+/* ── Form groups ── */
 .form-group {
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 
 .form-group label {
@@ -71,17 +126,34 @@ header h1 {
   border-color: #3a86ff;
 }
 
+.form-group input.input-error {
+  border-color: #f44336;
+}
+
 .form-group .hint {
   display: block;
   font-size: 11px;
   color: #666;
   margin-top: 4px;
+  line-height: 1.4;
 }
 
+.field-error {
+  display: none;
+  font-size: 11px;
+  color: #f44336;
+  margin-top: 4px;
+}
+
+/* ── Buttons ── */
 .form-actions {
   display: flex;
   gap: 12px;
   margin-top: 20px;
+}
+
+.form-actions-inline {
+  margin-top: 4px;
 }
 
 .btn {
@@ -112,6 +184,18 @@ header h1 {
   background: #3a3a5a;
 }
 
+.btn-ghost {
+  background: none;
+  border: 1px solid #444;
+  color: #888;
+}
+
+.btn-ghost:hover {
+  border-color: #888;
+  color: #ccc;
+}
+
+/* ── Status message ── */
 .status-message {
   margin-top: 16px;
   padding: 12px;

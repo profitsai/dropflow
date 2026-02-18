@@ -9,49 +9,65 @@
 <body>
   <div class="container">
     <header>
-      <h1>DropFlow Settings</h1>
+      <h1>⚙️ DropFlow Settings</h1>
+      <p class="header-desc">Configure how DropFlow lists and monitors your products.</p>
     </header>
 
-    <form id="settings-form">
+    <form id="settings-form" novalidate>
+      <!-- Listing Defaults -->
       <section class="settings-section">
-        <h2>Connection</h2>
+        <h2>📦 Listing Defaults</h2>
 
         <div class="form-group">
-          <label for="backendUrl">Backend Server URL</label>
-          <input type="url" id="backendUrl" placeholder="https://dropflow-api.onrender.com">
-          <span class="hint">URL of the DropFlow backend server</span>
-        </div>
-      </section>
-
-      <section class="settings-section">
-        <h2>Defaults</h2>
-
-        <div class="form-group">
-          <label for="defaultListingType">Default Listing Type</label>
+          <label for="defaultListingType">Listing Type</label>
           <select id="defaultListingType">
-            <option value="standard">Standard</option>
-            <option value="opti-list">Opti-List (AI optimized)</option>
-            <option value="chat-list">Chat-List (ChatGPT)</option>
-            <option value="seo-list">SEO-List</option>
+            <option value="standard">Standard — direct copy of product data</option>
+            <option value="opti-list">Opti-List — AI-optimized title &amp; description</option>
+            <option value="chat-list">Chat-List — ChatGPT-generated content</option>
+            <option value="seo-list">SEO-List — keyword-optimized for search</option>
           </select>
+          <span class="hint">How titles and descriptions are generated when you list products.</span>
         </div>
 
         <div class="form-group">
-          <label for="defaultThreadCount">Default Simultaneous Tabs</label>
-          <input type="number" id="defaultThreadCount" min="1" max="10" value="3">
-          <span class="hint">Number of tabs to process at once (1-10). Lower is safer.</span>
+          <label for="priceMarkup">Price Markup (%)</label>
+          <input type="number" id="priceMarkup" min="1" max="500" step="1" value="30" required>
+          <span class="hint">Added on top of the supplier price. E.g. 30% means a $10 item lists at $13.</span>
+          <span class="field-error" id="priceMarkup-error"></span>
         </div>
 
         <div class="form-group">
-          <label for="priceMarkup">Default Price Markup (%)</label>
-          <input type="number" id="priceMarkup" min="0" max="200" value="30">
-          <span class="hint">Percentage to add on top of Amazon price for eBay listing</span>
+          <label for="defaultThreadCount">Simultaneous Tabs</label>
+          <input type="number" id="defaultThreadCount" min="1" max="10" step="1" value="3" required>
+          <span class="hint">How many browser tabs DropFlow opens at once during bulk listing. Lower = slower but safer. Recommended: 2–4.</span>
+          <span class="field-error" id="defaultThreadCount-error"></span>
         </div>
       </section>
+
+      <!-- Advanced section (collapsible) -->
+      <details class="settings-section advanced-section" id="advanced-section">
+        <summary class="advanced-toggle">
+          <h2>🔧 Advanced</h2>
+          <span class="toggle-hint">Connection &amp; backend settings</span>
+        </summary>
+
+        <div class="advanced-content">
+          <div class="form-group">
+            <label for="backendUrl">Backend Server URL</label>
+            <input type="url" id="backendUrl" placeholder="https://dropflow-api.onrender.com" required>
+            <span class="hint">Only change this if you're self-hosting DropFlow's backend server.</span>
+            <span class="field-error" id="backendUrl-error"></span>
+          </div>
+
+          <div class="form-actions-inline">
+            <button type="button" id="test-backend" class="btn btn-secondary">🔌 Test Connection</button>
+          </div>
+        </div>
+      </details>
 
       <div class="form-actions">
-        <button type="submit" class="btn btn-primary">Save Settings</button>
-        <button type="button" id="test-backend" class="btn btn-secondary">Test Backend Connection</button>
+        <button type="submit" class="btn btn-primary">💾 Save Settings</button>
+        <button type="button" id="reset-defaults" class="btn btn-ghost">Reset to Defaults</button>
       </div>
 
       <div id="status-message" class="status-message" style="display: none;"></div>
