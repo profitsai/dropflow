@@ -34,7 +34,7 @@
   // Also auto-fill if address data was stored before navigation
   chrome.storage.local.get('__dropflow_pending_checkout').then(result => {
     const pending = result.__dropflow_pending_checkout;
-    if (pending && pending.shippingAddress) {
+    if (pending && pending.shippingAddress && (!pending.expiresAt || Date.now() < pending.expiresAt)) {
       console.log('[DropFlow Checkout] Found pending checkout data, auto-filling...');
       // Wait for page to be ready
       waitForCheckoutReady().then(() => {

@@ -181,6 +181,15 @@ export async function executeAutoOrder(orderId, progressCallback) {
 
   const settings = await getAutoOrderSettings();
 
+  // Check max price limit
+  if (settings.maxAutoOrderPrice && order.sourcePrice > settings.maxAutoOrderPrice) {
+    await updateOrder(orderId, {
+      status: ORDER_STATUS.FAILED,
+      errorMessage: `Source price $${order.sourcePrice} exceeds max auto-order price $${settings.maxAutoOrderPrice}`
+    });
+    return { error: `Source price exceeds max auto-order limit ($${settings.maxAutoOrderPrice})` };
+  }
+
   try {
     await updateOrder(orderId, { status: ORDER_STATUS.PROCESSING });
     progressCallback?.(orderId, 'processing', 'Opening source product page...');
@@ -188,11 +197,16 @@ export async function executeAutoOrder(orderId, progressCallback) {
     // Open the source product page in a new tab
     const tab = await chrome.tabs.create({ url: order.sourceUrl, active: true });
 
-    // Wait for the page to fully load
+    // Wait for the page to fully load (with timeout to prevent listener leak)
     await new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve(); // resolve anyway to continue
+      }, 30000);
       const listener = (tabId, changeInfo) => {
         if (tabId === tab.id && changeInfo.status === 'complete') {
           chrome.tabs.onUpdated.removeListener(listener);
+          clearTimeout(timeout);
           resolve();
         }
       };
@@ -218,14 +232,16 @@ export async function executeAutoOrder(orderId, progressCallback) {
     const shippingAddress = order.buyerAddress || settings.defaultShippingAddress;
 
     // Store pending checkout data so the checkout content script can auto-fill
-    // the address after Buy Now navigates to the checkout page
+    // the address after Buy Now navigates to the checkout page.
+    // Includes TTL (10 min) so stale data is ignored if checkout never loads.
     await chrome.storage.local.set({
       '__dropflow_pending_checkout': {
         orderId: order.id,
         shippingAddress,
         sourceVariant: order.sourceVariant || null,
         tabId: tab.id,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 10 * 60 * 1000
       }
     });
 
