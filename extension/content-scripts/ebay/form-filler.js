@@ -3757,33 +3757,30 @@
 
       const chips = [];
 
-      // Strategy 0: eBay MSKU builder chips use <span id="msku-variation-tag-N">
-      // with <button class="faux-link" aria-label="Remove {Name} attribute">.
-      // These are NOT matched by class selectors or clickable-element scans.
-      // Extract chip text from the Remove button's aria-label directly.
+      // Strategy 0: eBay MSKU builder chips use <span id="msku-variation-tag-N">.
+      // Only visible chips are active axes. Remove buttons are OUTSIDE the chip spans.
       {
-        const mskuEls = queryAllWithShadow(
-          '[id^="msku-variation-tag"], [class*="var-tag"] [role="tab"], [class*="var-tag"] span.selected',
-          activeDoc || document
-        ).filter(el => isElementVisible(el));
-        for (const el of mskuEls) {
-          const removeBtn =
-            el.querySelector('button[aria-label]') ||
-            queryAllWithShadow('button[aria-label]', el)[0];
-          if (!removeBtn) continue;
-          const ariaLabel = removeBtn.getAttribute('aria-label') || '';
-          const m = ariaLabel.match(/^Remove\s+(.+?)(?:\s+attribute)?\s*$/i);
-          if (!m) continue;
-          const cleaned = m[1].trim();
-          if (!cleaned || cleaned.length < 2 || cleaned.length > 45) continue;
-          const n = norm(cleaned);
+        const mskuTags = queryAllWithShadow('[id^="msku-variation-tag"]', activeDoc || document)
+          .filter(el => isElementVisible(el));
+        for (const el of mskuTags) {
+          const rawText = (el.textContent || '').trim();
+          if (!rawText || rawText.length < 2 || rawText.length > 45) continue;
+          if (/^\+/.test(rawText)) continue;
+          const n = norm(rawText);
+          if (!n) continue;
           if (chips.some(c => c.norm === n)) continue; // dedup
+          // Remove button is elsewhere in the DOM, not inside the chip span
+          const removeTarget = queryAllWithShadow('button[aria-label]', activeDoc || document)
+            .find(btn => {
+              const a = norm(btn.getAttribute('aria-label') || '');
+              return a.includes('remove') && a.includes(n);
+            }) || null;
           chips.push({
             el,
-            text: cleaned,
+            text: rawText,
             norm: n,
-            hasRemoveGlyph: true,
-            removeTarget: removeBtn,
+            hasRemoveGlyph: !!removeTarget,
+            removeTarget,
             rect: el.getBoundingClientRect()
           });
         }
@@ -4454,6 +4451,32 @@
           const freshBI = state.entriesNow.find(e => e.cb === builtInEntry.cb);
           const biChecked = freshBI ? isEntryChecked(freshBI) : false;
           console.warn(`[DropFlow] After built-in select: checked=${biChecked}, entries=[${state.entriesNow.map(e => `"${e.txt}"=${isEntryChecked(e)}`).join(', ')}]`);
+
+          // If checkbox was already checked when dialog opened, Save may be disabled
+          // because React sees no change. Force a change by unchecking then rechecking.
+          if (biChecked) {
+            const freshDlg2 = findAddAttributeDialog() || state.liveDialog || dialog;
+            let testSave = findButtonByText(freshDlg2, /^\s*save\s*$/i);
+            const saveAlreadyEnabled = testSave && !testSave.disabled &&
+              testSave.getAttribute?.('aria-disabled') !== 'true' &&
+              testSave.getAttribute?.('disabled') == null;
+            if (!saveAlreadyEnabled) {
+              console.warn(`[DropFlow] Save disabled despite biChecked=true — forcing uncheck+recheck`);
+              // Uncheck
+              const freshEntry = state.entriesNow.find(e => e.cb === builtInEntry.cb);
+              if (freshEntry) {
+                (freshEntry.row || freshEntry.cb).click();
+                await sleep(300);
+                // Re-check
+                state = resolveDialogState();
+                const freshEntry2 = state.entriesNow.find(e => e.cb === builtInEntry.cb);
+                if (freshEntry2 && !isEntryChecked(freshEntry2)) {
+                  (freshEntry2.row || freshEntry2.cb).click();
+                  await sleep(300);
+                }
+              }
+            }
+          }
 
           if (biChecked) {
             // Find Save button - search ONLY within the dialog, not the whole page
