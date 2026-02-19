@@ -4915,6 +4915,36 @@
         findByText(/^\+\s*create your own$/i) ||
         findByText(/create your own/i) ||
         findByText(/^\+\s*create/i);
+
+      // findCreateInput is defined outside the if(createBtn) block so it can also
+      // be used when no "Create your own" button exists (e.g. MSKU custom attributes
+      // that show an "Add an option" text input directly in the options panel).
+      const findCreateInput = () => {
+        const near = (createBtn && createBtn.closest('section, article, div, li, form')) || builderRoot || activeDoc;
+        const selectors = [
+          'input[type="text"]',
+          'input:not([type])',
+          'textarea',
+          '[contenteditable="true"]',
+          '[role="textbox"]',
+          '[role="combobox"]',
+          'input[aria-label*="option" i]',
+          'input[aria-label*="value" i]',
+          'input[placeholder*="option" i]',
+          'input[placeholder*="value" i]',
+          'input[placeholder*="create" i]'
+        ];
+        for (const sel of selectors) {
+          const local = queryAllWithShadow(sel, near).find(el => isElementVisible(el));
+          if (local) return local;
+        }
+        for (const sel of selectors) {
+          const global = queryAllWithShadow(sel, activeDoc).find(el => isElementVisible(el));
+          if (global) return global;
+        }
+        return null;
+      };
+
       if (createBtn) {
         (asClickableTarget(createBtn)).click();
         await sleep(300);
@@ -4923,31 +4953,6 @@
         // Poll broadly for textbox-like controls and prefer elements near the
         // create button before falling back to activeElement.
         let input = null;
-        const findCreateInput = () => {
-          const near = createBtn.closest('section, article, div, li, form') || builderRoot || activeDoc;
-          const selectors = [
-            'input[type="text"]',
-            'input:not([type])',
-            'textarea',
-            '[contenteditable="true"]',
-            '[role="textbox"]',
-            '[role="combobox"]',
-            'input[aria-label*="option" i]',
-            'input[aria-label*="value" i]',
-            'input[placeholder*="option" i]',
-            'input[placeholder*="value" i]',
-            'input[placeholder*="create" i]'
-          ];
-          for (const sel of selectors) {
-            const local = queryAllWithShadow(sel, near).find(el => isElementVisible(el));
-            if (local) return local;
-          }
-          for (const sel of selectors) {
-            const global = queryAllWithShadow(sel, activeDoc).find(el => isElementVisible(el));
-            if (global) return global;
-          }
-          return null;
-        };
 
         for (let tries = 0; tries < 10; tries++) {
           input = findCreateInput();
@@ -4983,6 +4988,31 @@
             value,
             createBtnText: (createBtn.textContent || '').trim()
           });
+        }
+      } else {
+        // For MSKU custom attributes, eBay shows an "Add an option" text input
+        // directly in the options panel (no "Create your own" button). Try to
+        // find and use it without any button click first.
+        let directInput = null;
+        for (let tries = 0; tries < 10; tries++) {
+          directInput = findCreateInput();
+          if (directInput) break;
+          await sleep(150);
+        }
+        if (directInput) {
+          await quickTypeAndEnter(directInput, value);
+          const inputScope2 = directInput.closest('div, li, section, form') || builderRoot || activeDoc;
+          const pickAdd2 = (ctx) => queryAllWithShadow('button, a, [role="button"], span', ctx)
+            .find(el => {
+              if (!isElementVisible(el)) return false;
+              const t = (el.textContent || '').trim().toLowerCase();
+              return t === 'add' || t === 'done';
+            });
+          const addBtn2 = pickAdd2(inputScope2) || pickAdd2(builderRoot) || pickAdd2(activeDoc);
+          if (addBtn2) {
+            (asClickableTarget(addBtn2)).click();
+            await sleep(250);
+          }
         }
       }
 
