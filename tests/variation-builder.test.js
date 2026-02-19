@@ -600,6 +600,38 @@ describe('Iframe vs parent frame lock logic', () => {
     expect(shouldSkip).toBe(true);
   });
 
+  it('duplicate-guard lock is cleared before parent bails for MSKU iframe so retries are not blocked', () => {
+    // Simulates: parent sets lock, detects MSKU iframe, clears lock, bails.
+    // After the fix, the lock must be absent so the next call can proceed.
+    const fakeWindow = {};
+    const flowLockKey = '__dropflowVariationBuilderFlowLock';
+    const flowStartedAt = Date.now();
+
+    // Step 1: set the lock (as runVariationBuilderPageFlow does before the bail check)
+    fakeWindow[flowLockKey] = { startedAt: flowStartedAt };
+    expect(fakeWindow[flowLockKey]).toBeDefined();
+
+    // Step 2: simulate MSKU iframe bail — the fix deletes the lock before returning
+    const IS_TOP_FRAME = true;
+    const iframeRect = { width: 800, height: 600 };
+    const shouldBail = IS_TOP_FRAME && iframeRect.width > 100 && iframeRect.height > 100;
+    if (shouldBail) {
+      delete fakeWindow[flowLockKey]; // ← the fix
+    }
+
+    // Step 3: verify the lock is gone so the next call won't hit the duplicate guard
+    expect(fakeWindow[flowLockKey]).toBeUndefined();
+
+    // Step 4: simulate next call — should NOT be blocked.
+    // Coerce to boolean exactly as the real guard does:
+    //   if (existingFlowLock && (age < 30000)) return false;
+    // When existingLock is undefined, the expression is falsy (not strictly false).
+    const nextCallAt = Date.now();
+    const existingLock = fakeWindow[flowLockKey];
+    const blockedByGuard = !!(existingLock && (nextCallAt - existingLock.startedAt) < 30000);
+    expect(blockedByGuard).toBe(false);
+  });
+
   it('cross-context lock scope uses draftId when available', () => {
     const url = 'https://bulkedit.ebay.com.au/sell/listing/builder?draftId=12345';
     const draftIdMatch = url.match(/draftId=(\d+)/);

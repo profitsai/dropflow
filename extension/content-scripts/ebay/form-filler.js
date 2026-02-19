@@ -2015,6 +2015,11 @@
         console.log(`[DropFlow] Skipping non-product axis: "${axis.name}"`);
         continue;
       }
+      // Fix 1: skip axes with no values after in-stock pruning (e.g. empty MPN axis)
+      if (!axis.values || axis.values.length === 0) {
+        console.log(`[DropFlow] Skipping empty-value axis: "${axis.name}"`);
+        continue;
+      }
       const ebayLabel = matchAxisToEbaySpecific(axis.name, fieldLabels);
       if (ebayLabel) {
         axisMapping.push({ axis, ebayLabel });
@@ -2026,7 +2031,11 @@
 
     if (axisMapping.length === 0) {
       // Fallback: required specifics may only contain Brand/UPC at this stage.
-      for (const axis of (variations.axes || []).slice(0, 2)) {
+      // Fix 1: filter out axes with no values before taking the first 2
+      const validAxes = (variations.axes || [])
+        .filter(axis => axis.values && axis.values.length > 0)
+        .slice(0, 2);
+      for (const axis of validAxes) {
         if (!axis?.name) continue;
         axisMapping.push({ axis, ebayLabel: axis.name });
       }
@@ -3442,7 +3451,8 @@
       ? axisMapping.map(m => ({ name: m.ebayLabel || m.axis?.name || '', values: m.axis?.values || [] }))
       : sanitizeVariationAxes(productData?.variations?.axes || []).map(a => ({ name: a.name, values: a.values || [] }))
     )
-      .filter(a => a.name)
+      // Fix 1: filter out axes with no actual values (e.g. MPN axis with no data)
+      .filter(a => a.name && Array.isArray(a.values) && a.values.length > 0)
       .slice(0, 2)
       .map(a => {
         const rawName = normalizeVariationAxisName(a.name);
@@ -3568,6 +3578,12 @@
           const iframeRect = mskuIframe.getBoundingClientRect();
           if (iframeRect.width > 100 && iframeRect.height > 100) {
             console.warn('[DropFlow] runVariationBuilderPageFlow: MSKU iframe detected in parent frame — bailing to let iframe handle it');
+            // BUG FIX: Clear the duplicate-guard lock before bailing so that
+            // subsequent calls from watchForPageTransitions are NOT blocked by
+            // the 30-second TTL.  Without this, every retry within 30 s returns
+            // false immediately from the guard, and the MSKU iframe path never
+            // gets a chance to complete.
+            delete flowLockHost[flowLockKey];
             await logVariationStep('variationBuilder:parentBailForIframe', { url: window.location.href });
             return false;
           }
@@ -3740,6 +3756,38 @@
       }
 
       const chips = [];
+
+      // Strategy 0: eBay MSKU builder chips use <span id="msku-variation-tag-N">
+      // with <button class="faux-link" aria-label="Remove {Name} attribute">.
+      // These are NOT matched by class selectors or clickable-element scans.
+      // Extract chip text from the Remove button's aria-label directly.
+      {
+        const mskuEls = queryAllWithShadow(
+          '[id^="msku-variation-tag"], [class*="var-tag"] [role="tab"], [class*="var-tag"] span.selected',
+          activeDoc || document
+        ).filter(el => isElementVisible(el));
+        for (const el of mskuEls) {
+          const removeBtn =
+            el.querySelector('button[aria-label]') ||
+            queryAllWithShadow('button[aria-label]', el)[0];
+          if (!removeBtn) continue;
+          const ariaLabel = removeBtn.getAttribute('aria-label') || '';
+          const m = ariaLabel.match(/^Remove\s+(.+?)(?:\s+attribute)?\s*$/i);
+          if (!m) continue;
+          const cleaned = m[1].trim();
+          if (!cleaned || cleaned.length < 2 || cleaned.length > 45) continue;
+          const n = norm(cleaned);
+          if (chips.some(c => c.norm === n)) continue; // dedup
+          chips.push({
+            el,
+            text: cleaned,
+            norm: n,
+            hasRemoveGlyph: true,
+            removeTarget: removeBtn,
+            rect: el.getBoundingClientRect()
+          });
+        }
+      }
 
       // Strategy 1: scan visible clickables in the attribute band (original approach)
       for (const el of getVisibleClickables()) {
@@ -3932,6 +3980,7 @@
       // near the "Attributes" label.
       let btn = findByText(/^\+\s*add$/i) || findByText(/^\s*add\s*$/i);
       if (btn) return btn;
+
       // Search for buttons/links with "add" near the attributes label area
       const attrLabel = findLabel(/^attributes$/i) || findLabel(/^\s*attributes\s*$/i) ||
                         findLabel(/^properties$/i) || findLabel(/^\s*properties\s*$/i);
@@ -3953,6 +4002,52 @@
         });
         if (btn) return btn;
       }
+
+      // Broader fallback: any <a> or <button> with aria-label containing "add"
+      const byAria = queryAllWithShadow('button[aria-label], a[aria-label]', activeDoc)
+        .find(el => isElementVisible(el) && /\badd\b/i.test(el.getAttribute('aria-label') || ''));
+      if (byAria) return byAria;
+
+      // Broader text search: a/button/role=button whose textContent contains add-like phrases
+      // Use normalized text to handle SVG/icon fragments mixed into textContent
+      const byText = queryAllWithShadow('a, button, [role="button"], span[tabindex]', activeDoc)
+        .filter(el => isElementVisible(el))
+        .find(el => {
+          const txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
+          return /\+\s*add/i.test(txt) ||
+                 /add\s+attribute/i.test(txt) ||
+                 /add\s+variation/i.test(txt) ||
+                 /add\s+option/i.test(txt) ||
+                 /create\s+your\s+own/i.test(txt);
+        });
+      if (byText) return byText;
+
+      // Positional fallback: find clickable elements just below the last attribute chip
+      // (eBay typically places the "+ Add" link immediately after the chip list)
+      const allChips = readAttributeChips();
+      if (allChips.length > 0) {
+        const lastChip = allChips[allChips.length - 1];
+        if (lastChip?.el) {
+          const lastRect = lastChip.el.getBoundingClientRect();
+          const nearby = getVisibleClickables(activeDoc).filter(el => {
+            const r = el.getBoundingClientRect();
+            return r.top > lastRect.bottom - 10 &&
+                   r.top < lastRect.bottom + 100 &&
+                   Math.abs(r.left - lastRect.left) < 200;
+          });
+          const addBtn = nearby.find(el => /\badd\b|\+/i.test((el.textContent || '').trim()));
+          if (addBtn) return addBtn;
+        }
+      }
+
+      // Last resort: any visible clickable element starting with "+"
+      const plusBtn = getVisibleClickables(activeDoc).find(el => {
+        const txt = (el.textContent || '').trim();
+        return txt === '+' || txt.startsWith('+');
+      });
+      if (plusBtn) return plusBtn;
+
+      // Final broad fallback
       return findByText(/\badd\b/i);
     };
 
@@ -4184,7 +4279,28 @@
         // Refresh builderRoot before reading chips — React re-renders after Save
         // can detach the old root from the DOM, causing queries to return empty.
         builderRoot = findBuilderRoot();
-        return readAttributeChips().some(c => matchesAlias(c.norm, spec, true) || c.norm === norm(axisLabel));
+        const chips = readAttributeChips();
+        if (chips.some(c => matchesAlias(c.norm, spec, true) || c.norm === norm(axisLabel))) return true;
+
+        // MSKU iframe right-panel check: after clicking Save on a built-in attribute,
+        // the chip appears in the right panel ("Attributes and options you've selected")
+        // which is OUTSIDE the band that readAttributeChips() scans.
+        // Scan the entire activeDoc for any element whose text matches our axis label
+        // and which has a Remove button (indicating it's a selected chip, not just a list item).
+        const normLabel = norm(axisLabel);
+        const allRemoveBtns = queryAllWithShadow(
+          'button[aria-label*="Remove"], button[aria-label*="remove"], button[aria-label*="Delete"], [role="button"][aria-label*="Remove"]',
+          activeDoc || document
+        );
+        return allRemoveBtns.some(btn => {
+          const ariaLabel = norm(btn.getAttribute('aria-label') || '');
+          // Only match if the aria-label specifically references THIS axis label
+          // (not a partial match that could hit other attributes)
+          const container = btn.closest('[class*="chip"],[class*="tag"],[class*="token"],[class*="selected"],[class*="attribute"]') || btn.parentElement;
+          const containerText = norm((container?.textContent || '').replace(/remove/gi, '').trim());
+          return (ariaLabel.includes(normLabel) && ariaLabel.length < normLabel.length + 30) ||
+                 (containerText === normLabel || containerText.startsWith(normLabel));
+        });
       };
 
       // Pre-check: if the attribute chip already exists (e.g. from a previous session
@@ -4199,6 +4315,13 @@
         const addBtn = findAddAttributeTrigger();
         if (!addBtn) {
           await logVariationStep('variationBuilder:addOwnNoAddBtn', { axis: axisLabel, attempt });
+          // BUG FIX: The Add button may not be rendered yet if the page is still
+          // transitioning (e.g. right after removing blacklisted chips).  Wait and
+          // retry rather than bailing immediately.  Only give up after all 3 attempts.
+          if (attempt < 3) {
+            await sleep(1500);
+            continue;
+          }
           return false;
         }
         simulateClick(addBtn);
@@ -5028,12 +5151,17 @@
     let missingSpecs = axisSpecs.filter(spec => !mappedAxes.some(m => m.spec === spec));
 
     // Try adding missing attributes from +Add menu.
+    // Track which specs were successfully added so we can handle them via
+    // text input if readAttributeChips() can't detect them as chips
+    // (custom/non-standard attribute case).
+    const addedViaMenu = new Set();
     for (const spec of missingSpecs) {
       builderRoot = findBuilderRoot();
       chips = readAttributeChips();
       const exists = chips.some(c => matchesAlias(c.norm, spec, false) || matchesAlias(c.norm, spec, true));
       if (exists) continue;
       const added = await addAttributeFromMenu(spec);
+      if (added) addedViaMenu.add(spec);
       await logVariationStep('variationBuilder:attributeAddAttempt', {
         axis: spec.axis.name,
         added
@@ -5047,12 +5175,128 @@
     console.warn(`[DropFlow] Post-add chips: [${chips.map(c => c.text).join(', ')}]`);
     mappedAxes = mapSpecsToChips(chips);
     missingSpecs = axisSpecs.filter(spec => !mappedAxes.some(m => m.spec === spec));
+
+    // Initialise counters here so the custom-attribute text-input path below
+    // can increment them before the normal chip-click loop runs.
+    let selectedAxes = 0;
+    let selectedValues = 0;
+
+    // Custom attribute fallback: when eBay's MSKU builder represents a custom
+    // attribute (e.g. "Emitting Color", "Length") as a text-input panel instead
+    // of a pre-defined chip, readAttributeChips() returns [] and mapSpecsToChips()
+    // cannot match the spec.  addAttributeFromMenu() already returned true (the
+    // Remove button for that attribute exists in the DOM), so the attribute IS
+    // present – just not rendered as a clickable chip.
+    // In that case find the visible text input for the attribute and type each value.
+    const customAxesHandled = new Set();
     if (missingSpecs.length > 0) {
       for (const spec of missingSpecs) {
-        await logVariationStep('variationBuilder:noAttributeMatch', { axis: spec.axis.name, chips: chips.map(c => c.text) });
+        // Only attempt specs that were successfully added via addAttributeFromMenu.
+        // Specs that were never added at all are truly missing and will fail below.
+        if (!addedViaMenu.has(spec)) continue;
+
+        const axisLabel = spec.axis.name;
+        const normLabel = norm(axisLabel);
+
+        builderRoot = findBuilderRoot();
+
+        // Find the text input for adding values to this custom attribute.
+        // eBay shows "Add option" / "Enter a value" style inputs for non-standard attrs.
+        const findCustomAttrInput = () => {
+          const candidates = queryAllWithShadow(
+            'input[type="text"], input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="search"]):not([type="email"]):not([type="number"]), textarea',
+            builderRoot || activeDoc
+          ).filter(el => {
+            if (!isElementVisible(el)) return false;
+            if (el.closest('[role="dialog"]')) return false; // ignore dialog inputs
+            const ph = (el.getAttribute('placeholder') || '').toLowerCase();
+            const ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+            const name = (el.getAttribute('name') || '').toLowerCase();
+            return /add|option|value|enter/i.test(`${ph} ${ariaLabel} ${name}`);
+          });
+          if (candidates.length === 0) return null;
+          if (candidates.length === 1) return candidates[0];
+
+          // Multiple inputs: prefer the one nearest to this attribute's Remove button.
+          const removeBtns = queryAllWithShadow('button[aria-label]', activeDoc || document)
+            .filter(el => {
+              const aNorm = norm(el.getAttribute('aria-label') || '');
+              return aNorm.includes('remove') && aNorm.includes(normLabel);
+            });
+          if (removeBtns.length > 0) {
+            const refRect = removeBtns[0].getBoundingClientRect();
+            const sorted = candidates.slice().sort((a, b) => {
+              const ar = a.getBoundingClientRect();
+              const br = b.getBoundingClientRect();
+              const aDist = Math.abs(ar.top - refRect.top) + Math.abs(ar.left - refRect.left);
+              const bDist = Math.abs(br.top - refRect.top) + Math.abs(br.left - refRect.left);
+              return aDist - bDist;
+            });
+            return sorted[0];
+          }
+          return candidates[0];
+        };
+
+        const customInput = findCustomAttrInput();
+        if (!customInput) {
+          await logVariationStep('variationBuilder:customAttrNoInput', { axis: axisLabel });
+          continue;
+        }
+
+        const rawVals = Array.from(new Set(spec.axis.values)).slice(0, 40);
+        const uniqueVals = rawVals.filter(v => { const n = norm(v); return !!(n && n.length > 0); });
+        let addedCount = 0;
+
+        for (const v of uniqueVals) {
+          builderRoot = findBuilderRoot();
+          await commitInputValue(customInput, v);
+          await sleep(300);
+
+          const view = customInput.ownerDocument?.defaultView || window;
+          customInput.dispatchEvent(new view.KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+          customInput.dispatchEvent(new view.KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+          customInput.dispatchEvent(new view.KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+          await sleep(400);
+
+          // Also click an adjacent "Add" button when present.
+          const inputScope = customInput.closest('div, li, section, form') || builderRoot || activeDoc;
+          const addBtn = queryAllWithShadow('button, a, [role="button"], span', inputScope || activeDoc)
+            .find(el => {
+              if (!isElementVisible(el)) return false;
+              const t = (el.textContent || '').trim().toLowerCase();
+              return t === 'add' || t === 'done' || t === '+';
+            });
+          if (addBtn) {
+            (asClickableTarget(addBtn)).click();
+            await sleep(300);
+          }
+
+          addedCount++;
+        }
+
+        await logVariationStep('variationBuilder:customAttrValuesFilled', {
+          axis: axisLabel,
+          valueCount: uniqueVals.length,
+          addedCount
+        });
+        console.warn(`[DropFlow] Custom attr "${axisLabel}": typed ${addedCount}/${uniqueVals.length} values via text input`);
+
+        if (addedCount > 0) {
+          customAxesHandled.add(spec);
+          selectedAxes++;
+          selectedValues += addedCount;
+        }
       }
-      console.warn('[DropFlow] Variation builder could not create required custom attributes');
-      return false;
+
+      // After custom-attr handling, check for truly unresolvable specs.
+      const trulyMissing = missingSpecs.filter(spec => !customAxesHandled.has(spec));
+      if (trulyMissing.length > 0) {
+        for (const spec of trulyMissing) {
+          await logVariationStep('variationBuilder:noAttributeMatch', { axis: spec.axis.name, chips: chips.map(c => c.text) });
+        }
+        console.warn('[DropFlow] Variation builder could not create required custom attributes');
+        return false;
+      }
     }
 
     // Remove extra chips that aren't mapped to desired axes.
@@ -5077,13 +5321,14 @@
       return { ...m, chip: refreshed || m.chip };
     });
 
-    let selectedAxes = 0;
-    let selectedValues = 0;
+    // selectedAxes / selectedValues were declared and potentially incremented above
+    // by the custom-attribute text-input path. Do NOT redeclare them here.
 
     for (const mapped of mappedAxes) {
       builderRoot = findBuilderRoot();
-      // Use native .click() for chip selection to avoid double-toggle
-      (asClickableTarget(mapped.chip.el)).click();
+      // Fix 3: eBay's React components require full PointerEvent+MouseEvent sequence.
+      // simulateClick dispatches pointerenter/over/down, mousedown, pointerup, mouseup, click.
+      simulateClick(asClickableTarget(mapped.chip.el));
       await sleepShort();
 
       // FIX: Wait for options panel to render after chip click. eBay's React UI
@@ -5094,6 +5339,44 @@
         const hasCreateOwn = findByText(/create your own/i);
         if (earlyOpts.length > 0 || hasCreateOwn) break;
         await sleep(250);
+        builderRoot = findBuilderRoot();
+      }
+
+      // Fix 4: Verify the chip selection registered by checking the right panel
+      // ("Attributes and options you've selected") before proceeding to fill values.
+      // eBay's builder updates a selected-state indicator on the chip after clicking.
+      const chipNorm = norm(mapped.chip.text);
+      let chipRegistered = false;
+      for (let regWait = 0; regWait < 8; regWait++) {
+        builderRoot = findBuilderRoot();
+        // Check 1: options or "create your own" are visible (options panel opened)
+        const opts = readVisibleOptions();
+        const hasCreateOwn = findByText(/create your own/i);
+        if (opts.length > 0 || hasCreateOwn) { chipRegistered = true; break; }
+        // Check 2: the chip element itself has an aria-selected/aria-pressed/active indicator
+        const freshChip = readAttributeChips().find(c => c.norm === chipNorm);
+        if (freshChip) {
+          const el = freshChip.el;
+          const isActive = el.getAttribute('aria-selected') === 'true' ||
+                           el.getAttribute('aria-pressed') === 'true' ||
+                           el.getAttribute('aria-expanded') === 'true' ||
+                           el.classList.contains('active') ||
+                           el.classList.contains('selected');
+          if (isActive) { chipRegistered = true; break; }
+        }
+        // Check 3: look for Remove button containing this chip's label in the right panel
+        const removeInPanel = queryAllWithShadow('button[aria-label]', activeDoc || document)
+          .some(el => {
+            const aria = norm(el.getAttribute('aria-label') || '');
+            return aria.includes('remove') && aria.includes(chipNorm);
+          });
+        if (removeInPanel) { chipRegistered = true; break; }
+        await sleep(200);
+      }
+      if (!chipRegistered) {
+        console.warn(`[DropFlow] Chip "${mapped.chip.text}" may not have registered — retrying click`);
+        simulateClick(asClickableTarget(mapped.chip.el));
+        await sleep(400);
         builderRoot = findBuilderRoot();
       }
       selectedAxes++;
@@ -5337,6 +5620,14 @@
 
     } finally { // <<< guarantee lock release on ALL exit paths
       await releaseCrossContextLock();
+      // BUG FIX: Clear the in-frame duplicate-guard lock so that subsequent
+      // retry attempts from checkPendingData (or watchForPageTransitions) are
+      // NOT blocked by the 30-second TTL after a failed run.  The lock should
+      // only be held *during* an active run, not after it exits.
+      const current = flowLockHost[flowLockKey];
+      if (current && current.startedAt === flowStartedAt) {
+        delete flowLockHost[flowLockKey];
+      }
     }
   }
 
@@ -10504,7 +10795,16 @@
               if (builderOk) {
                 // Signal parent that builder completed
                 try { await chrome.storage.local.set({ dropflow_builder_complete: { ts: Date.now(), draftId: window.location.href } }); } catch (_) {}
+                return; // Only exit on success
               }
+              // BUG FIX: Builder returned false (e.g. Add button not yet rendered,
+              // page still transitioning).  Don't return — wait and re-poll so we
+              // retry once the UI has fully loaded.
+              console.warn(`[DropFlow] Subframe builder attempt failed (poll=${poll}); will retry after delay`);
+              await logVariationStep('checkPendingData:subframeBuilderRetry', { poll, url: window.location.href });
+              await sleep(3000);
+              builderCtx = detectVariationBuilderContextWithLog(`checkPendingData:subframeRetry:${poll}`);
+              continue;
             } catch (err) {
               console.error('[DropFlow] Subframe builder flow error:', err);
               await logVariationStep('checkPendingData:subframeBuilderError', {
@@ -10512,8 +10812,11 @@
                 error: String(err?.message || err).substring(0, 300),
                 stack: String(err?.stack || '').substring(0, 500)
               });
+              // On exception also retry rather than giving up permanently
+              await sleep(3000);
+              builderCtx = detectVariationBuilderContextWithLog(`checkPendingData:subframeError:${poll}`);
+              continue;
             }
-            return;
           }
 
           if (poll % 10 === 0) {
