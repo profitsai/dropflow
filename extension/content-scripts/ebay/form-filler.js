@@ -5351,7 +5351,14 @@
       builderRoot = findBuilderRoot();
       // Fix 3: eBay's React components require full PointerEvent+MouseEvent sequence.
       // simulateClick dispatches pointerenter/over/down, mousedown, pointerup, mouseup, click.
-      simulateClick(asClickableTarget(mapped.chip.el));
+      // For MSKU builder chips: the inner <button class="faux-link"> (no aria-label) is
+      // the click target that activates the axis and shows its options panel.
+      // The outer span itself doesn't trigger React's option panel on click.
+      const chipInnerBtn = mapped.chip.el.querySelector('button.faux-link:not([aria-label])') ||
+                           mapped.chip.el.querySelector('button:not([aria-label])') ||
+                           null;
+      const chipClickTarget = chipInnerBtn || asClickableTarget(mapped.chip.el);
+      simulateClick(chipClickTarget);
       await sleepShort();
 
       // FIX: Wait for options panel to render after chip click. eBay's React UI
@@ -5398,7 +5405,11 @@
       }
       if (!chipRegistered) {
         console.warn(`[DropFlow] Chip "${mapped.chip.text}" may not have registered — retrying click`);
-        simulateClick(asClickableTarget(mapped.chip.el));
+        // Retry: same inner-button preference as initial click.
+        const chipInnerBtnRetry = mapped.chip.el.querySelector('button.faux-link:not([aria-label])') ||
+                                  mapped.chip.el.querySelector('button:not([aria-label])') ||
+                                  null;
+        simulateClick(chipInnerBtnRetry || asClickableTarget(mapped.chip.el));
         await sleep(400);
         builderRoot = findBuilderRoot();
       }
