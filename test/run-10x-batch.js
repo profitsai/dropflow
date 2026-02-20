@@ -1,7 +1,13 @@
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 
+const { connectWithRetry, waitForPortOpen, discoverBrowserWSEndpoint, CdpReconnectManager } = require('../lib/cdp');
+
 const WS = 'ws://127.0.0.1:62547/devtools/browser/ef8b6f3e-39e0-49ce-a27a-9eba2d3107dd';
+const WS_URL = new URL(WS);
+const CDP_HOST = WS_URL.hostname || '127.0.0.1';
+const CDP_PORT = Number(WS_URL.port);
+
 const EXT_ID = 'hikiofeedjngalncoapgpmljpaoeolci';
 const OUT = '/Users/pyrite/Projects/dropflow-extension/test/10X-TEST-PROGRESS.md';
 
@@ -37,21 +43,38 @@ async function safeEval(page, fn, timeout = 10000, fallback = null) {
   }
 }
 
+async function connectBrowser() {
+  await waitForPortOpen({ host: CDP_HOST, port: CDP_PORT, timeoutMs: 30_000, pollMs: 250 });
+  return connectWithRetry({
+    // NOTE: Multilogin can restart Chromium and change the /devtools/browser/<id> portion.
+    // Always re-discover the current websocket URL from /json/version.
+    getWsEndpoint: async () => discoverBrowserWSEndpoint({ host: CDP_HOST, port: CDP_PORT, timeoutMs: 30_000, pollMs: 250 }),
+    retries: 8,
+    timeoutMs: 30_000,
+    baseDelayMs: 250,
+    connect: (ws) => puppeteer.connect({ browserWSEndpoint: ws, defaultViewport: null }),
+  });
+}
+
+async function getOrOpenBulkPage(browser) {
+  const pages = await browser.pages();
+  let bulkPage = pages.find(p => p.url().includes(`chrome-extension://${EXT_ID}/pages/ali-bulk-lister`));
+  if (!bulkPage) {
+    bulkPage = await browser.newPage();
+    await bulkPage.goto(`chrome-extension://${EXT_ID}/pages/ali-bulk-lister/ali-bulk-lister.html`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  }
+  await bulkPage.bringToFront();
+  await sleep(1500);
+  return bulkPage;
+}
+
 (async () => {
   const rows = products.map((p, i) => ({ idx: i+1, product: p[0], status: '⏳', ebayUrl: '', variations: '', notes: 'Pending' }));
   const startedAt = new Date().toISOString();
   fs.writeFileSync(OUT, render(rows, startedAt));
 
-  const browser = await puppeteer.connect({ browserWSEndpoint: WS, defaultViewport: null });
-  let pages = await browser.pages();
-  let bulkPage = pages.find(p => p.url().includes(`chrome-extension://${EXT_ID}/pages/ali-bulk-lister`));
-  if (!bulkPage) {
-    bulkPage = await browser.newPage();
-    await bulkPage.goto(`chrome-extension://${EXT_ID}/pages/ali-bulk-lister/ali-bulk-lister.html`, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  }
-
-  await bulkPage.bringToFront();
-  await sleep(1500);
+  const browser = await connectBrowser();
+  let bulkPage = await getOrOpenBulkPage(browser);
   await safeEval(bulkPage, () => new Promise(res => chrome.storage.local.set({ dropflow_price_markup: 30, priceMarkup: 30 }, res)));
 
   for (let i = 0; i < products.length; i++) {

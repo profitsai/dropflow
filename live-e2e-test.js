@@ -9,6 +9,7 @@
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
+const { connectWithRetry, waitForPortOpen, discoverBrowserWSEndpoint } = require('./lib/cdp');
 
 const WS_ENDPOINT = 'ws://127.0.0.1:54497/devtools/browser/ee8691b1-8818-4657-901b-2a594e60dfc5';
 const EXTENSION_ID = 'hikiofeedjngalncoapgpmljpaoeolci';
@@ -34,7 +35,21 @@ async function main() {
     
     // === Connect ===
     logSection('1. Browser Connection');
-    browser = await puppeteer.connect({ browserWSEndpoint: WS_ENDPOINT, defaultViewport: null });
+    const wsUrl = new URL(WS_ENDPOINT);
+    await waitForPortOpen({ host: wsUrl.hostname || '127.0.0.1', port: Number(wsUrl.port), timeoutMs: 30_000, pollMs: 250 });
+
+    browser = await connectWithRetry({
+      getWsEndpoint: async () => discoverBrowserWSEndpoint({ host: wsUrl.hostname || '127.0.0.1', port: Number(wsUrl.port), timeoutMs: 30_000, pollMs: 250 }),
+      retries: 8,
+      timeoutMs: 30_000,
+      baseDelayMs: 250,
+      connect: async (ws) => {
+        const u = new URL(ws);
+        await waitForPortOpen({ host: u.hostname || '127.0.0.1', port: Number(u.port), timeoutMs: 10_000, pollMs: 250 });
+        return puppeteer.connect({ browserWSEndpoint: ws, defaultViewport: null });
+      },
+    });
+    browser.on?.('disconnected', () => log('⚠️ CDP disconnected (browser websocket closed)'));
     log('✅ Connected to Multilogin browser via CDP');
     
     let pages = await browser.pages();
