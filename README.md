@@ -131,6 +131,23 @@ npx vitest run
 
 Tests cover core modules: pricing, scraping, tracker logic, boost scheduling, and auto-order flows.
 
+### CDP-based runner scripts (E2E / batch)
+
+Some scripts in this repo connect to an existing Chromium browser via the Chrome DevTools Protocol (CDP) (e.g. Multilogin Mimic).
+
+Configure the target via environment variables:
+
+- `CDP_HOST` (default: `127.0.0.1`)
+- `CDP_PORT` (required unless `CDP_URL` is set)
+- `CDP_URL` (optional override, e.g. `http://127.0.0.1:9222`)
+
+Examples:
+
+```bash
+CDP_PORT=9222 node live-e2e-test.js
+CDP_URL=http://127.0.0.1:9222 node test/run-10x-batch.js
+```
+
 ---
 
 ## 📄 License

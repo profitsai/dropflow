@@ -9,9 +9,21 @@
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 const path = require('path');
-const { connectWithRetry, waitForPortOpen, discoverBrowserWSEndpoint } = require('./lib/cdp');
+const { connectWithRetry, waitForPortOpen, discoverBrowserWSEndpoint, getCdpTargetFromEnv, cdpEnvHelpText } = require('./lib/cdp');
 
-const WS_ENDPOINT = 'ws://127.0.0.1:54497/devtools/browser/ee8691b1-8818-4657-901b-2a594e60dfc5';
+// CDP config:
+//   CDP_HOST (default 127.0.0.1)
+//   CDP_PORT (required unless CDP_URL set)
+//   CDP_URL  (optional override, e.g. http://127.0.0.1:9222)
+let CDP;
+try {
+  CDP = getCdpTargetFromEnv();
+} catch (e) {
+  console.error(`[E2E] ${e.message}`);
+  if (e.help) console.error(e.help);
+  else console.error(cdpEnvHelpText());
+  process.exit(2);
+}
 const EXTENSION_ID = 'hikiofeedjngalncoapgpmljpaoeolci';
 const EXT_BASE = `chrome-extension://${EXTENSION_ID}`;
 const ALI_URL = 'https://www.aliexpress.com/item/1005006508328498.html';
@@ -30,16 +42,24 @@ async function main() {
   try {
     log('# DropFlow Live E2E Test Results');
     log(`**Date**: ${new Date().toISOString()}`);
-    log(`**Browser**: Multilogin Mimic (CDP port 53104)`);
+    log(`**Browser**: Multilogin Mimic (CDP ${CDP.host}:${CDP.port})`);
     log(`**Extension**: ${EXTENSION_ID}`);
     
     // === Connect ===
     logSection('1. Browser Connection');
-    const wsUrl = new URL(WS_ENDPOINT);
-    await waitForPortOpen({ host: wsUrl.hostname || '127.0.0.1', port: Number(wsUrl.port), timeoutMs: 30_000, pollMs: 250 });
+    try {
+      await waitForPortOpen({ host: CDP.host, port: CDP.port, timeoutMs: 30_000, pollMs: 250 });
+    } catch (e) {
+      const msg = `[E2E] Timed out waiting for CDP on ${CDP.host}:${CDP.port}.\n` +
+        `Set CDP_PORT (or CDP_URL) to point at your running browser.\n\n${cdpEnvHelpText()}`;
+      e.message = msg + `\n\nOriginal error: ${e.message}`;
+      throw e;
+    }
 
     browser = await connectWithRetry({
-      getWsEndpoint: async () => discoverBrowserWSEndpoint({ host: wsUrl.hostname || '127.0.0.1', port: Number(wsUrl.port), timeoutMs: 30_000, pollMs: 250 }),
+      // NOTE: Multilogin can restart Chromium and change the /devtools/browser/<id> portion.
+      // Always re-discover the current websocket URL from /json/version.
+      getWsEndpoint: async () => discoverBrowserWSEndpoint({ host: CDP.host, port: CDP.port, timeoutMs: 30_000, pollMs: 250 }),
       retries: 8,
       timeoutMs: 30_000,
       baseDelayMs: 250,

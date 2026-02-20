@@ -1,6 +1,20 @@
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
-const WS = 'ws://127.0.0.1:55870/devtools/browser/21627e4c-7ee4-4746-b7cf-44fd73f7ca5d';
+const { discoverBrowserWSEndpoint, getCdpTargetFromEnv, cdpEnvHelpText } = require('../lib/cdp');
+
+async function connectBrowser() {
+  let CDP;
+  try {
+    CDP = getCdpTargetFromEnv();
+  } catch (e) {
+    console.error(`[complete-test] ${e.message}`);
+    if (e.help) console.error(e.help);
+    else console.error(cdpEnvHelpText());
+    process.exit(2);
+  }
+  const ws = await discoverBrowserWSEndpoint({ host: CDP.host, port: CDP.port, timeoutMs: 30_000, pollMs: 250 });
+  return puppeteer.connect({ browserWSEndpoint: ws, defaultViewport: null });
+}
 
 function log(msg) { console.log(`[${new Date().toLocaleTimeString()}] ${msg}`); }
 async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -19,7 +33,7 @@ const skuData = {
 };
 
 (async () => {
-  const browser = await puppeteer.connect({ browserWSEndpoint: WS });
+  const browser = await connectBrowser();
   const pages = await browser.pages();
   const lstng = pages.find(p => p.url().includes('/lstng'));
   const bf = lstng.frames().find(f => f.url().includes('bulkedit'));

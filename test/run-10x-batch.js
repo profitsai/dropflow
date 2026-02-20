@@ -1,12 +1,21 @@
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 
-const { connectWithRetry, waitForPortOpen, discoverBrowserWSEndpoint, CdpReconnectManager } = require('../lib/cdp');
+const { connectWithRetry, waitForPortOpen, discoverBrowserWSEndpoint, CdpReconnectManager, getCdpTargetFromEnv, cdpEnvHelpText } = require('../lib/cdp');
 
-const WS = 'ws://127.0.0.1:62547/devtools/browser/ef8b6f3e-39e0-49ce-a27a-9eba2d3107dd';
-const WS_URL = new URL(WS);
-const CDP_HOST = WS_URL.hostname || '127.0.0.1';
-const CDP_PORT = Number(WS_URL.port);
+// CDP config:
+//   CDP_HOST (default 127.0.0.1)
+//   CDP_PORT (required unless CDP_URL set)
+//   CDP_URL  (optional override, e.g. http://127.0.0.1:9222)
+let CDP;
+try {
+  CDP = getCdpTargetFromEnv();
+} catch (e) {
+  console.error(`[10x] ${e.message}`);
+  if (e.help) console.error(e.help);
+  else console.error(cdpEnvHelpText());
+  process.exit(2);
+}
 
 const EXT_ID = 'hikiofeedjngalncoapgpmljpaoeolci';
 const OUT = '/Users/pyrite/Projects/dropflow-extension/test/10X-TEST-PROGRESS.md';
@@ -44,11 +53,18 @@ async function safeEval(page, fn, timeout = 10000, fallback = null) {
 }
 
 async function connectBrowser() {
-  await waitForPortOpen({ host: CDP_HOST, port: CDP_PORT, timeoutMs: 30_000, pollMs: 250 });
+  try {
+    await waitForPortOpen({ host: CDP.host, port: CDP.port, timeoutMs: 30_000, pollMs: 250 });
+  } catch (e) {
+    const msg = `[10x] Timed out waiting for CDP on ${CDP.host}:${CDP.port}.\n` +
+      `Set CDP_PORT (or CDP_URL) to point at your running browser.\n\n${cdpEnvHelpText()}`;
+    e.message = msg + `\n\nOriginal error: ${e.message}`;
+    throw e;
+  }
   return connectWithRetry({
     // NOTE: Multilogin can restart Chromium and change the /devtools/browser/<id> portion.
     // Always re-discover the current websocket URL from /json/version.
-    getWsEndpoint: async () => discoverBrowserWSEndpoint({ host: CDP_HOST, port: CDP_PORT, timeoutMs: 30_000, pollMs: 250 }),
+    getWsEndpoint: async () => discoverBrowserWSEndpoint({ host: CDP.host, port: CDP.port, timeoutMs: 30_000, pollMs: 250 }),
     retries: 8,
     timeoutMs: 30_000,
     baseDelayMs: 250,
@@ -167,7 +183,7 @@ async function getOrOpenBulkPage(browser) {
       let tabInfo = '';
       let hasAli = false, hasEbay = false, hasListed = false;
       try {
-        const resp = await fetch(`http://127.0.0.1:62547/json/list`);
+        const resp = await fetch(`${CDP.baseUrl}/json/list`);
         const tabs = await resp.json();
         for (const tab of tabs) {
           if (tab.type !== 'page') continue;

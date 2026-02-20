@@ -1,17 +1,31 @@
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
-const WS = 'ws://127.0.0.1:55870/devtools/browser/21627e4c-7ee4-4746-b7cf-44fd73f7ca5d';
+const { discoverBrowserWSEndpoint, getCdpTargetFromEnv, cdpEnvHelpText } = require('../lib/cdp');
+
+async function connectBrowser() {
+  let CDP;
+  try {
+    CDP = getCdpTargetFromEnv();
+  } catch (e) {
+    console.error(`[store-and-go] ${e.message}`);
+    if (e.help) console.error(e.help);
+    else console.error(cdpEnvHelpText());
+    process.exit(2);
+  }
+  const ws = await discoverBrowserWSEndpoint({ host: CDP.host, port: CDP.port, timeoutMs: 30_000, pollMs: 250 });
+  return puppeteer.connect({ browserWSEndpoint: ws });
+}
 
 (async () => {
-  const browser = await puppeteer.connect({ browserWSEndpoint: WS });
+  const browser = await connectBrowser();
   const pages = await browser.pages();
   const extPage = pages.find(p => p.url().includes('ali-bulk-lister') || p.url().includes('chrome-extension://'));
-  
+
   if (!extPage) { console.error('No extension page'); process.exit(1); }
-  
+
   // Load the good product data we already have
   const rawData = JSON.parse(fs.readFileSync('/Users/pyrite/Projects/dropflow-extension/test/product-data.json', 'utf8'));
-  
+
   // Enhance with required fields for the form filler
   const productData = {
     ...rawData,
@@ -54,13 +68,13 @@ const WS = 'ws://127.0.0.1:55870/devtools/browser/21627e4c-7ee4-4746-b7cf-44fd73
       'Dog Size': 'S',
     }
   };
-  
+
   // Close any existing eBay tabs first
   const ebayPages = pages.filter(p => p.url().includes('ebay.com.au'));
   for (const p of ebayPages) {
     try { await p.close(); } catch(e) {}
   }
-  
+
   // Store in the correct key
   console.log('Storing product data...');
   const stored = await extPage.evaluate(async (data) => {
@@ -73,7 +87,7 @@ const WS = 'ws://127.0.0.1:55870/devtools/browser/21627e4c-7ee4-4746-b7cf-44fd73
     return check.pendingListingData ? 'stored OK - ' + check.pendingListingData.title?.substring(0,40) : 'FAILED';
   }, productData);
   console.log('Storage:', stored);
-  
+
   // Open eBay prelist page
   console.log('Opening eBay prelist...');
   const newTabId = await extPage.evaluate(async () => {
@@ -81,7 +95,7 @@ const WS = 'ws://127.0.0.1:55870/devtools/browser/21627e4c-7ee4-4746-b7cf-44fd73
     return tab.id;
   });
   console.log('Tab created:', newTabId);
-  
+
   // Set up form filler injection listener
   await extPage.evaluate(async (tabId) => {
     const listener = async (changeTabId, changeInfo, tab) => {
@@ -104,7 +118,7 @@ const WS = 'ws://127.0.0.1:55870/devtools/browser/21627e4c-7ee4-4746-b7cf-44fd73
     chrome.tabs.onUpdated.addListener(listener);
     setTimeout(() => chrome.tabs.onUpdated.removeListener(listener), 300000);
   }, newTabId);
-  
+
   // Monitor progress
   console.log('\nMonitoring...');
   for (let i = 0; i < 60; i++) {
@@ -114,7 +128,7 @@ const WS = 'ws://127.0.0.1:55870/devtools/browser/21627e4c-7ee4-4746-b7cf-44fd73
     if (ebay) {
       const url = ebay.url();
       console.log(`[${(i+1)*5}s] ${url.substring(0, 100)}`);
-      
+
       // Check form filler status
       const status = await ebay.evaluate(() => {
         return {
@@ -123,9 +137,9 @@ const WS = 'ws://127.0.0.1:55870/devtools/browser/21627e4c-7ee4-4746-b7cf-44fd73
           url: location.pathname
         };
       }).catch(() => ({ error: 'eval failed' }));
-      
+
       if (status.loaded) console.log('  Form filler is loaded');
-      
+
       if (url.includes('/lstng') && i % 3 === 0) {
         await ebay.screenshot({ path: `progress-${i}.png` });
         console.log('  Screenshot saved');
@@ -134,6 +148,6 @@ const WS = 'ws://127.0.0.1:55870/devtools/browser/21627e4c-7ee4-4746-b7cf-44fd73
       console.log(`[${(i+1)*5}s] No eBay page`);
     }
   }
-  
+
   browser.disconnect();
 })().catch(e => { console.error(e.message); process.exit(1); });
